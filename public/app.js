@@ -1,4 +1,4 @@
-const { ROLES, ACTIONS } = window.Game;
+const { ROLES, actionsFor, rolesFor } = window.Game;
 const KEY = 'lcs-session';
 const app = document.getElementById('app'), toastEl = document.getElementById('toast');
 
@@ -117,8 +117,15 @@ function renderLobby() {
         b.setAttribute('aria-pressed', v.timer === s);
         return b;
       })),
-      h('p', { className: 'tag' }, 'When time runs out, a slow crawler passes or Grinds automatically.'))
-      : h('p', { className: 'tag' }, `Move timer: ${v.timer ? `${v.timer}s` : 'off'}`),
+      h('p', { className: 'tag' }, 'When time runs out, a slow crawler passes or Grinds automatically.'),
+      h('h2', {}, 'Card set'),
+      h('div', { className: 'grid' }, [false, true].map(on => {
+        const b = btn(on ? 'Paparazzo' : 'Classic', () => send({ type: 'variant', on }), v.variant === on ? '' : 'ghost');
+        b.setAttribute('aria-pressed', v.variant === on);
+        return b;
+      })),
+      h('p', { className: 'tag' }, v.variant ? `${ROLES.paparazzo.icon} Paparazzo replaces the Changeling. ${ROLES.paparazzo.text}` : `${ROLES.changeling.icon} Changeling. ${ROLES.changeling.text}`))
+      : h('p', { className: 'tag' }, `Move timer: ${v.timer ? `${v.timer}s` : 'off'} · Card set: ${v.variant ? 'Paparazzo' : 'Classic'}`),
     v.host ? btn('Start the show', () => send({ type: 'start' }), 'hot', v.names.length < 2 ? 'Needs at least 2 crawlers' : null)
       : h('p', { className: 'tag' }, `Waiting for ${v.names[0]} to start the show…`),
     btn('Leave', leave, 'ghost'),
@@ -127,6 +134,9 @@ function renderLobby() {
 
 function prompt(g, me) {
   const name = id => g.players[id].name, my = g.players[me];
+  const ACTIONS = actionsFor(g.variant);
+  // Only you see this: whether a claim would be true for your hand.
+  const held = r => my.cards.some(x => !x.revealed && x.role === r) ? '✓ you hold it' : '🤥 bluff';
   const isAlive = p => p.cards.some(c => !c.revealed);
   const c = g.cur, a = c && ACTIONS[c.action];
   const say = (text, ...kids) => [h('p', {}, text), ...kids];
@@ -143,7 +153,7 @@ function prompt(g, me) {
     return say(my.coins >= 10 ? 'Your turn. 10+ gold: you must Boss Drop.' : 'Your turn. Claim anything. Nobody checks unless they dare.',
       h('div', { className: 'grid' }, Object.entries(ACTIONS).map(([id, act]) => {
         const b = btn(act.name, () => { if (act.target) { picking = id; render(); } else send({ type: 'action', action: id }); },
-          act.claim ? '' : 'ghost', act.text + (act.claim ? ` · ${ROLES[act.claim].name}` : ''));
+          act.claim ? '' : 'ghost', act.text + (act.claim ? ` · ${ROLES[act.claim].name} · ${held(act.claim)}` : ''));
         b.disabled = my.coins < (act.cost || 0) || (my.coins >= 10 && id !== 'coup');
         return b;
       })));
@@ -155,7 +165,7 @@ function prompt(g, me) {
     const canBlock = a.blockBy && (c.target == null || c.target === me);
     return say(what, h('div', { className: 'grid' },
       g.canChallenge && btn('Call the bluff', () => send({ type: 'challenge' }), 'hot', 'Wrong? You lose a card'),
-      canBlock && a.blockBy.map(r => btn(`Block as ${ROLES[r].name}`, () => send({ type: 'block', role: r }), '', 'Bluffing allowed')),
+      canBlock && a.blockBy.map(r => btn(`Block as ${ROLES[r].name}`, () => send({ type: 'block', role: r }), '', held(r))),
       btn('Let it happen', () => send({ type: 'pass' }), 'ghost')));
   }
 
@@ -163,6 +173,14 @@ function prompt(g, me) {
     const what = `${name(g.block.by)} blocks ${a.name} as ${ROLES[g.block.role].name}`;
     if (!g.waiting.includes(me)) return say(what, h('p', { className: 'tag' }, waitingOn()));
     return say(what, h('div', { className: 'grid' }, btn('Call the bluff', () => send({ type: 'challenge' }), 'hot', 'Wrong? You lose a card'), btn('Accept the block', () => send({ type: 'pass' }), 'ghost')));
+  }
+
+  if (g.phase === 'show') return say(c.target === me ? `${name(c.actor)} gets a look at one of your cards. Tap the one to show.` : `${name(c.target)} is choosing a card to show ${name(c.actor)}…`);
+
+  if (g.phase === 'peek') {
+    if (c.actor !== me) return say(`${name(c.actor)} is inspecting ${c.target === me ? 'your' : `${name(c.target)}'s`} card…`);
+    return say(`${name(c.target)} is holding:`, h('div', { className: 'grid' }, card(g.peek.role, '', null)),
+      h('div', { className: 'grid' }, btn('Make them redraw', () => send({ type: 'peek', swap: true }), 'hot'), btn('Let them keep it', () => send({ type: 'peek', swap: false }), 'ghost')));
   }
 
   if (g.phase === 'lose') return say(g.loser === me ? 'Tap one of your cards below to lose it.' : `${name(g.loser)} is choosing a card to lose…`);
@@ -194,7 +212,8 @@ function renderGame() {
   const slam = (p, i) => old && p.cards[i].revealed && !old[p.id].cards[i].revealed ? ' slam' : '';
   const news = fresh && (!prev || prev.log[prev.log.length - 1] !== g.log[g.log.length - 1]);
   const myMove = g.phase !== 'over' && my.cards.some(c => !c.revealed) &&
-    ((g.phase === 'turn' && g.turn === me) || g.waiting.includes(me) || g.loser === me || !!g.offer);
+    ((g.phase === 'turn' && g.turn === me) || g.waiting.includes(me) || g.loser === me || !!g.offer ||
+      (g.phase === 'show' && g.cur.target === me) || (g.phase === 'peek' && g.cur.actor === me));
   const deaths = g.players.flatMap(p => p.cards).filter(c => c.revealed).length; // viewers love bloodshed
   if (fresh) {
     if (g.phase === 'over' && (!prev || prev.phase !== 'over')) tone([523, 659, 784, 1047], 0.15);
@@ -218,12 +237,13 @@ function renderGame() {
     h('div', { className: `panel${myMove ? ' myturn' : ''}` }, h('div', { id: 'clock', className: 'clock' }), prompt(g, me)),
     h('div', { className: 'bar' }, h('h2', {}, `${my.name} · your cards`), h('span', { className: `gold${pop(my)}` }, `🪙 ${my.coins}`)),
     h('div', { className: 'grid' }, my.cards.map((c, i) => card(c.role, (c.revealed ? 'gone' : '') + slam(my, i),
-      g.phase === 'lose' && g.loser === me && !c.revealed ? () => send({ type: 'lose', card: i }) : null))),
+      c.revealed ? null : g.phase === 'lose' && g.loser === me ? () => send({ type: 'lose', card: i })
+        : g.phase === 'show' && g.cur.target === me ? () => send({ type: 'show', card: i }) : null))),
     h('details', {}, h('summary', {}, 'Show log'), g.log.slice().reverse().map(l => h('p', {}, l))),
     h('details', {}, h('summary', {}, 'Rules'),
       h('p', {}, 'Everyone has 2 hidden cards. Lose both and you are dead. Last one alive wins.'),
       h('p', {}, 'You may claim any role, held or not. If someone calls your bluff and you lied, you lose a card. If you told the truth, they do.'),
-      Object.values(ROLES).map(r => h('p', {}, `${r.icon} ${r.name}. ${r.text}`)),
+      rolesFor(g.variant).map(k => ROLES[k]).map(r => h('p', {}, `${r.icon} ${r.name}. ${r.text}`)),
       h('p', {}, 'Anyone: Grind +1, Fan Donations +2, Boss Drop (7 gold, cannot be stopped; forced at 10+ gold).')),
     g.phase === 'over' && btn('Leave room', leave, 'ghost'),
   );

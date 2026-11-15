@@ -5,6 +5,7 @@
     backstabber: { name: 'Backstabber', icon: '🗡️', text: 'Shiv: pay 3 gold, a rival loses a card.' },
     goblin: { name: 'Loot Goblin', icon: '💰', text: 'Yoink: steal 2 gold. Blocks Yoink.' },
     changeling: { name: 'Changeling', icon: '🎭', text: 'Respec: swap cards with the deck. Blocks Yoink.' },
+    paparazzo: { name: 'Paparazzo', icon: '📸', text: 'Respec: swap 1 card with the deck. Exposé: see a rival\'s card and maybe make them redraw it. Blocks Yoink.' },
     bouncer: { name: 'Bouncer', icon: '🛡️', text: 'Safe Room: blocks Shiv.' },
   };
 
@@ -17,6 +18,16 @@
     assassinate: { name: 'Shiv', text: 'Pay 3: kill a card', claim: 'backstabber', cost: 3, target: true, blockBy: ['bouncer'] },
     coup: { name: 'Boss Drop', text: 'Pay 7: kill a card', cost: 7, target: true },
   };
+  // Paparazzo variant: the Paparazzo replaces the Changeling (smaller Respec, plus Exposé).
+  const VARIANT = {
+    ...ACTIONS,
+    steal: { ...ACTIONS.steal, blockBy: ['goblin', 'paparazzo'] },
+    exchange: { name: 'Respec', text: 'Swap 1 card', claim: 'paparazzo' },
+    examine: { name: 'Exposé', text: 'See a rival card', claim: 'paparazzo', target: true },
+  };
+  const actionsFor = variant => variant ? VARIANT : ACTIONS;
+  const rolesFor = variant => Object.keys(ROLES).filter(r => r !== (variant ? 'changeling' : 'paparazzo'));
+  const A = g => actionsFor(g.variant);
 
   const alive = p => p.cards.some(c => !c.revealed);
   const holds = (p, role) => p.cards.find(c => !c.revealed && c.role === role);
@@ -30,9 +41,9 @@
     return a;
   }
 
-  function newGame(names, rng = Math.random) {
-    const g = { rng, log: [], phase: 'turn', cur: null, block: null, waiting: [], canChallenge: false, loser: null, offer: null, after: null, winner: null };
-    g.deck = shuffle(Object.keys(ROLES).flatMap(r => [r, r, r]), rng);
+  function newGame(names, rng = Math.random, variant = false) {
+    const g = { rng, variant, peekCard: null, log: [], phase: 'turn', cur: null, block: null, waiting: [], canChallenge: false, loser: null, offer: null, after: null, winner: null };
+    g.deck = shuffle(rolesFor(variant).flatMap(r => [r, r, r]), rng);
     g.players = names.map((name, id) => ({
       id, name, coins: 2,
       cards: [g.deck.pop(), g.deck.pop()].map(role => ({ role, revealed: false })),
@@ -69,7 +80,7 @@
   }
 
   function openReact(g, canChallenge) {
-    const c = g.cur, a = ACTIONS[c.action];
+    const c = g.cur, a = A(g)[c.action];
     if (!alive(g.players[c.actor])) return endTurn(g); // actor was removed mid-action
     g.phase = 'react'; g.canChallenge = canChallenge;
     g.waiting = g.players
@@ -87,7 +98,7 @@
   }
 
   function endTurn(g) {
-    g.cur = g.block = g.offer = g.loser = null; g.waiting = [];
+    g.cur = g.block = g.offer = g.loser = g.peekCard = null; g.waiting = [];
     if (finish(g)) return;
     do g.turn = (g.turn + 1) % g.players.length; while (!alive(g.players[g.turn]));
     g.phase = 'turn';
@@ -103,9 +114,16 @@
       case 'steal': { const n = Math.min(2, t.coins); t.coins -= n; p.coins += n; break; }
       case 'coup': case 'assassinate': return lose(g, c.target, () => endTurn(g));
       case 'exchange':
-        g.offer = [...p.cards.filter(x => !x.revealed).map(x => x.role), g.deck.pop(), g.deck.pop()];
+        g.offer = [...p.cards.filter(x => !x.revealed).map(x => x.role), g.deck.pop()];
+        if (!g.variant) g.offer.push(g.deck.pop());
         g.phase = 'exchange';
         return;
+      case 'examine': { // target picks which card to show; with one card left there is no choice
+        const left = t.cards.map((x, i) => x.revealed ? -1 : i).filter(i => i >= 0);
+        if (!left.length) break;
+        if (left.length === 1) { g.peekCard = left[0]; g.phase = 'peek'; } else g.phase = 'show';
+        return;
+      }
     }
     endTurn(g);
   }
@@ -115,11 +133,11 @@
     const p = g.players[pid];
     if (!p || !m || typeof m !== 'object') return 'Bad move';
     if (!alive(p)) return 'You are dead';
-    const c = g.cur, a = c && ACTIONS[c.action];
+    const c = g.cur, a = c && A(g)[c.action];
 
     if (g.phase === 'turn') {
-      if (pid !== g.turn || m.type !== 'action' || !Object.hasOwn(ACTIONS, m.action)) return 'Not your move';
-      const act = ACTIONS[m.action];
+      if (pid !== g.turn || m.type !== 'action' || !Object.hasOwn(A(g), m.action)) return 'Not your move';
+      const act = A(g)[m.action];
       if (p.coins >= 10 && m.action !== 'coup') return 'With 10+ gold you must Boss Drop';
       if (p.coins < (act.cost || 0)) return 'Not enough gold';
       const t = act.target && Number.isInteger(m.target) ? g.players[m.target] : null;
@@ -138,7 +156,7 @@
       if (m.type === 'pass') {
         g.waiting.splice(i, 1);
         if (!g.waiting.length) {
-          if (blocking) { say(g, `${ACTIONS[c.action].name} is blocked.`); endTurn(g); } else resolve(g);
+          if (blocking) { say(g, `${a.name} is blocked.`); endTurn(g); } else resolve(g);
         }
         return;
       }
@@ -187,6 +205,24 @@
       return;
     }
 
+    if (g.phase === 'show') {
+      const card = Number.isInteger(m.card) ? p.cards[m.card] : null;
+      if (pid !== c.target || m.type !== 'show' || !card || card.revealed) return 'Not your move';
+      g.peekCard = m.card; g.phase = 'peek';
+      return;
+    }
+
+    if (g.phase === 'peek') {
+      if (pid !== c.actor || m.type !== 'peek') return 'Not your move';
+      const t = g.players[c.target], card = t.cards[g.peekCard];
+      if (m.swap && !card.revealed) {
+        g.deck.push(card.role); shuffle(g.deck, g.rng); card.role = g.deck.pop();
+        say(g, `${p.name} didn't like what they saw. ${t.name} redraws that card.`);
+      } else say(g, `${p.name} takes a good look and lets ${t.name} keep it.`);
+      endTurn(g);
+      return;
+    }
+
     return 'Game over';
   }
 
@@ -196,6 +232,8 @@
       phase: g.phase, turn: g.turn, cur: g.cur, block: g.block, waiting: g.waiting, canChallenge: g.canChallenge,
       loser: g.loser, winner: g.winner, log: g.log.slice(-40),
       offer: g.phase === 'exchange' && g.cur.actor === pid ? g.offer : null,
+      variant: g.variant,
+      peek: g.phase === 'peek' ? { card: g.peekCard, role: g.cur.actor === pid ? g.players[g.cur.target].cards[g.peekCard].role : null } : null,
       players: g.players.map(p => ({
         id: p.id, name: p.name, coins: p.coins,
         cards: p.cards.map(c => ({ revealed: c.revealed, role: c.revealed || p.id === pid ? c.role : null })),
@@ -208,7 +246,8 @@
     if (g.phase === 'turn') return [g.turn];
     if (g.phase === 'react' || g.phase === 'blockReact') return g.waiting.slice();
     if (g.phase === 'lose') return [g.loser];
-    if (g.phase === 'exchange') return [g.cur.actor];
+    if (g.phase === 'exchange' || g.phase === 'peek') return [g.cur.actor];
+    if (g.phase === 'show') return [g.cur.target];
     return [];
   }
 
@@ -220,6 +259,8 @@
       return act(g, pid, p.coins >= 10 ? { type: 'action', action: 'coup', target: rival.id } : { type: 'action', action: 'income' });
     }
     if (g.phase === 'lose') return act(g, pid, { type: 'lose', card: p.cards.findIndex(c => !c.revealed) });
+    if (g.phase === 'show') return act(g, pid, { type: 'show', card: p.cards.findIndex(c => !c.revealed) });
+    if (g.phase === 'peek') return act(g, pid, { type: 'peek', swap: false });
     if (g.phase === 'exchange') return act(g, pid, { type: 'exchange', keep: p.cards.filter(c => !c.revealed).map((_, i) => i) });
     return act(g, pid, { type: 'pass' });
   }
@@ -235,5 +276,5 @@
     else if (g.cur.actor === pid && g.phase !== 'lose') endTurn(g); // their pending action dies with them
   }
 
-  Object.assign(exports, { ROLES, ACTIONS, newGame, act, view, waitingOn, autoMove, forfeit });
+  Object.assign(exports, { ROLES, ACTIONS, actionsFor, rolesFor, newGame, act, view, waitingOn, autoMove, forfeit });
 })(typeof module !== 'undefined' ? module.exports : (window.Game = {}));

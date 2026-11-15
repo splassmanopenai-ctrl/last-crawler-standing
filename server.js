@@ -13,7 +13,7 @@ const newCode = () => Array.from({ length: 5 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ'
 const roomView = (room, i) => ({
   code: room.code, you: i, host: i === 0, names: room.players.map(p => p.name),
   game: room.game ? view(room.game, i) : null,
-  timer: room.timer || 0, left: room.deadline ? room.deadline - Date.now() : null, // ms left, so phone clocks need not agree
+  timer: room.timer || 0, variant: !!room.variant, left: room.deadline ? room.deadline - Date.now() : null, // ms left, so phone clocks need not agree
 });
 
 const GONE = 'event: gone\ndata: {}\n\n'; // tells a phone to forget its seat
@@ -74,12 +74,14 @@ const api = {
     if (!s) throw 'You are not in this room';
     const { room, i } = s;
     const type = move && move.type;
-    if (type === 'start' || type === 'timer' || type === 'kick') {
+    if (type === 'start' || type === 'timer' || type === 'variant' || type === 'kick') {
       if (i !== 0) throw 'Only the host can do that';
       const playing = room.game && room.game.phase !== 'over';
       if (type === 'timer') {
         if (![0, 30, 60].includes(move.seconds)) throw 'Bad timer';
         room.timer = move.seconds;
+      } else if (type === 'variant') {
+        room.variant = move.on === true; // applies from the next game
       } else if (type === 'kick') {
         const t = move.target;
         if (!Number.isInteger(t) || t < 1 || t >= room.players.length) throw 'Bad target';
@@ -91,7 +93,7 @@ const api = {
         if (staying.length < 2) throw 'Need at least 2 players';
         room.players.filter(p => p.kicked).forEach(drop);
         room.players = staying;
-        room.game = newGame(staying.map(p => p.name));
+        room.game = newGame(staying.map(p => p.name), Math.random, !!room.variant);
       }
     } else {
       if (!room.game) throw 'Game has not started';

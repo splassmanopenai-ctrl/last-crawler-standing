@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { ACTIONS, ROLES, newGame, act, view, waitingOn, autoMove, forfeit } = require('../public/game.js');
+const { ACTIONS, ROLES, actionsFor, newGame, act, view, waitingOn, autoMove, forfeit } = require('../public/game.js');
 
 test('forfeit on your own turn passes the turn and kills you', () => {
   const g = newGame(['A', 'B', 'C']);
@@ -93,21 +93,43 @@ test('10+ gold forces a Boss Drop; view hides rival cards', () => {
 test('random play always ends with one winner and 15 cards', () => {
   const pick = a => a[Math.floor(Math.random() * a.length)];
   for (let n = 2; n <= 6; n++) for (let run = 0; run < 30; run++) {
-    const g = newGame(Array.from({ length: n }, (_, i) => 'P' + i));
+    const g = newGame(Array.from({ length: n }, (_, i) => 'P' + i), Math.random, run % 2 === 1);
     for (let i = 0; g.phase !== 'over'; i++) {
       assert.ok(i < 50000, 'game did not finish');
       if (Math.random() < 0.01) forfeit(g, pick(g.players).id);
       if (g.phase === 'over') break;
       assert.ok(waitingOn(g).length && waitingOn(g).every(id => g.players[id].cards.some(c => !c.revealed)), 'waiting on nobody or a dead player');
       act(g, pick(g.players).id, pick([
-        { type: 'action', action: pick(Object.keys(ACTIONS)), target: pick(g.players).id },
+        { type: 'action', action: pick(Object.keys(actionsFor(true))), target: pick(g.players).id },
         { type: 'pass' }, { type: 'challenge' }, { type: 'block', role: pick(Object.keys(ROLES)) },
-        { type: 'lose', card: pick([0, 1]) }, { type: 'exchange', keep: pick([[0], [1], [2], [0, 1], [1, 2], [0, 3], [2, 3]]) },
+        { type: 'lose', card: pick([0, 1]) }, { type: 'show', card: pick([0, 1]) }, { type: 'peek', swap: pick([true, false]) }, { type: 'exchange', keep: pick([[0], [1], [2], [0, 1], [1, 2], [0, 2], [0, 3], [2, 3]]) },
       ]));
       assert.ok(g.players.every(p => p.coins >= 0));
-      const inPlay = g.players.length * 2 + g.deck.length + (g.phase === 'exchange' ? 2 : 0);
+      const inPlay = g.players.length * 2 + g.deck.length + (g.phase === 'exchange' ? (g.variant ? 1 : 2) : 0);
       assert.strictEqual(inPlay, 15);
     }
     assert.strictEqual(g.players.filter(p => p.cards.some(c => !c.revealed)).length, 1);
   }
+});
+
+test('Paparazzo variant: Exposé shows one card to the actor only, and can force a redraw', () => {
+  const g = newGame(['A', 'B', 'C'], Math.random, true);
+  assert.ok(!g.deck.includes('changeling') && g.players.every(p => p.cards.every(c => c.role !== 'changeling')));
+  g.turn = 0;
+  g.players[1].cards[1].role = 'bouncer';
+  ok(g, 0, { type: 'action', action: 'examine', target: 1 });
+  ok(g, 1, { type: 'pass' }); ok(g, 2, { type: 'pass' });
+  assert.strictEqual(g.phase, 'show');
+  ok(g, 1, { type: 'show', card: 1 });
+  assert.strictEqual(view(g, 0).peek.role, 'bouncer');
+  assert.strictEqual(view(g, 2).peek.role, null);
+  ok(g, 0, { type: 'peek', swap: true });
+  assert.strictEqual(g.turn, 1);
+  assert.strictEqual(g.players.length * 2 + g.deck.length, 15);
+});
+
+test('classic game rejects the variant-only action', () => {
+  const g = newGame(['A', 'B']);
+  g.turn = 0;
+  assert.ok(act(g, 0, { type: 'action', action: 'examine', target: 1 }));
 });
