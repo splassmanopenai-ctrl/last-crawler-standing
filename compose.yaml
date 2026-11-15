@@ -1,0 +1,9 @@
+services:
+  game:
+    build: .
+    init: true # node as PID 1 ignores stop signals; this makes `docker compose down` instant
+    ports:
+      - "3000:3000"
+    environment:
+      PASSCODE: ${PASSCODE:-}
+    restart: unless-stopped

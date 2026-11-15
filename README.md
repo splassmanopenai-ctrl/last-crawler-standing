@@ -14,6 +14,14 @@ node server.js
 
 Then open `http://localhost:3000`, tap **Host a new game**, and share the invite link or 5-letter room code.
 
+### Or with Docker
+
+```bash
+docker compose up -d --build
+```
+
+Stop it with `docker compose down`. To require a host passcode, start it with `PASSCODE=something-secret docker compose up -d --build`.
+
 ### Letting friends in
 
 - **Same Wi-Fi:** friends open `http://<your-computer's-IP>:3000`.
