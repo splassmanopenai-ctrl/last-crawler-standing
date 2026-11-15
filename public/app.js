@@ -8,6 +8,7 @@ const h = (tag, props = {}, ...kids) => fill(Object.assign(document.createElemen
 const btn = (label, onclick, cls = '', sub) => h('button', { onclick, className: cls }, label, sub && h('small', {}, sub));
 
 let session = JSON.parse(localStorage.getItem(KEY) || 'null');
+let prev = null, fresh = false; // previous game view, and whether this render follows a server update
 let v = null, es = null, picking = null, keep = [], toastTimer;
 
 function toast(msg) {
@@ -27,7 +28,7 @@ const send = move => { picking = null; post('move', { ...session, move }).catch(
 function connect() {
   if (es) es.close();
   es = new EventSource(`/api/events?code=${session.code}&token=${session.token}`);
-  es.onmessage = e => { v = JSON.parse(e.data); render(); };
+  es.onmessage = e => { prev = v && v.game; v = JSON.parse(e.data); fresh = true; render(); fresh = false; };
   // The server says "gone" when the room no longer exists. Plain errors are not trusted for this:
   // a page reload also fires one. Dropped connections retry on their own.
   es.addEventListener('gone', leave);
@@ -146,16 +147,27 @@ function renderGame() {
   const g = v.game, me = v.you, my = g.players[me];
   if (g.phase !== 'exchange') keep = [];
   if (g.phase !== 'turn') picking = null;
+  // Animate only what changed in the update that just arrived, not on every local re-render.
+  const old = fresh && prev && prev.players.length === g.players.length ? prev.players : null;
+  const pop = p => old && old[p.id].coins !== p.coins ? ' pop' : '';
+  const slam = (p, i) => old && p.cards[i].revealed && !old[p.id].cards[i].revealed ? ' slam' : '';
+  const news = fresh && (!prev || prev.log[prev.log.length - 1] !== g.log[g.log.length - 1]);
+  const myMove = g.phase !== 'over' && my.cards.some(c => !c.revealed) &&
+    ((g.phase === 'turn' && g.turn === me) || g.waiting.includes(me) || g.loser === me || !!g.offer);
+  const deaths = g.players.flatMap(p => p.cards).filter(c => c.revealed).length; // viewers love bloodshed
   fill(app,
-    h('div', { className: 'bar' }, h('h2', {}, 'Last Crawler Standing'), h('span', { className: 'tag' }, `Room ${v.code}`)),
-    h('div', { id: 'announcer' }, h('b', {}, 'THE SYSTEM'), g.log[g.log.length - 1]),
+    g.phase === 'over' && fresh && h('div', { className: 'confetti' }, Array.from({ length: 16 }, (_, i) =>
+      h('span', { style: `left:${(i * 37) % 100}%;animation-delay:${(i % 5) * 0.15}s` }, ['🎉', '🪙', '💀', '⭐'][i % 4]))),
+    h('div', { className: 'bar' }, h('h2', {}, h('span', { className: 'live' }, '● LIVE'), ' Last Crawler Standing'),
+      h('span', { className: 'tag' }, `👁 ${(2.4 + deaths * 1.7).toFixed(1)}M · ${v.code}`)),
+    h('div', { id: 'announcer', className: news ? 'in' : '' }, h('b', {}, 'THE SYSTEM'), g.log[g.log.length - 1]),
     g.players.filter(p => p.id !== me).map(p => h('div', { className: `rival${g.turn === p.id && g.phase !== 'over' ? ' turn' : ''}${p.cards.every(c => c.revealed) ? ' dead' : ''}` },
       h('span', { className: 'name' }, p.name),
-      p.cards.map(c => h('span', { className: `pip${c.revealed ? ' gone' : ''}` }, c.revealed ? `${ROLES[c.role].icon} ${ROLES[c.role].name}` : '🂠 hidden')),
-      h('span', { className: 'gold' }, `🪙 ${p.coins}`))),
-    h('div', { className: 'panel' }, prompt(g, me)),
-    h('div', { className: 'bar' }, h('h2', {}, `${my.name} · your cards`), h('span', { className: 'gold' }, `🪙 ${my.coins}`)),
-    h('div', { className: 'grid' }, my.cards.map((c, i) => card(c.role, c.revealed ? 'gone' : '',
+      p.cards.map((c, i) => h('span', { className: `pip${c.revealed ? ' gone' : ''}${slam(p, i)}` }, c.revealed ? `${ROLES[c.role].icon} ${ROLES[c.role].name}` : '🂠 hidden')),
+      h('span', { className: `gold${pop(p)}` }, `🪙 ${p.coins}`))),
+    h('div', { className: `panel${myMove ? ' myturn' : ''}` }, prompt(g, me)),
+    h('div', { className: 'bar' }, h('h2', {}, `${my.name} · your cards`), h('span', { className: `gold${pop(my)}` }, `🪙 ${my.coins}`)),
+    h('div', { className: 'grid' }, my.cards.map((c, i) => card(c.role, (c.revealed ? 'gone' : '') + slam(my, i),
       g.phase === 'lose' && g.loser === me && !c.revealed ? () => send({ type: 'lose', card: i }) : null))),
     h('details', {}, h('summary', {}, 'Show log'), g.log.slice().reverse().map(l => h('p', {}, l))),
     h('details', {}, h('summary', {}, 'Rules'),
