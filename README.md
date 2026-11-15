@@ -54,6 +54,13 @@ On your turn pick one action. You may claim **any** role, whether you hold it or
 - With 10 or more gold you must Boss Drop.
 - There are 3 copies of each role in the deck.
 
+## Host controls
+
+- **Move timer** (lobby): Off, 30s or 60s. When it runs out, anyone being waited on makes the dullest legal move: pass, Grind, or lose their first card.
+- **Remove a player** (✕ next to their name): in the lobby it frees the seat; mid-game it kills their cards and they sit out the rematch.
+
+Sound and vibration cue your turn; the speaker button in the header mutes it.
+
 ## Changing the theme
 
 Every role name, action name and announcer line lives at the top of [public/game.js](public/game.js).
@@ -68,4 +75,4 @@ node --test
 - `server.js` — rooms and per-player views (the server never sends you another player's hidden cards)
 - `public/app.js`, `public/index.html` — the phone UI
 
-Known limits: games live in memory, so restarting the server ends them. A player who closes their browser for good stalls the game; reopening the page on the same phone puts them back in their seat.
+Known limits: games live in memory, so restarting the server ends them. A player who closes their browser for good stalls the game unless a move timer is on or the host removes them; reopening the page on the same phone puts them back in their seat.

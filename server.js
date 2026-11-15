@@ -1,6 +1,6 @@
 // Relay server: serves the phone UI, holds every room's hidden state, sends each player only their own view.
 const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto');
-const { newGame, act, view } = require('./public/game.js');
+const { newGame, act, view, waitingOn, autoMove, forfeit } = require('./public/game.js');
 
 const PORT = process.env.PORT || 3000;
 const PASSCODE = process.env.PASSCODE || ''; // if set, required to create a room
@@ -13,7 +13,29 @@ const newCode = () => Array.from({ length: 5 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ'
 const roomView = (room, i) => ({
   code: room.code, you: i, host: i === 0, names: room.players.map(p => p.name),
   game: room.game ? view(room.game, i) : null,
+  timer: room.timer || 0, left: room.deadline ? room.deadline - Date.now() : null, // ms left, so phone clocks need not agree
 });
+
+const GONE = 'event: gone\ndata: {}\n\n'; // tells a phone to forget its seat
+const drop = p => p.res && p.res.end(GONE);
+
+// Optional move timer: when it runs out, everyone being waited on makes the dullest legal move.
+function arm(room) {
+  clearTimeout(room.t);
+  room.deadline = null;
+  const g = room.game;
+  if (!g || g.phase === 'over' || !room.timer) return;
+  room.deadline = Date.now() + room.timer * 1000;
+  room.t = setTimeout(() => {
+    for (const id of waitingOn(g)) {
+      if (!waitingOn(g).includes(id)) continue;
+      g.log.push(`${g.players[id].name} ran out the clock.`);
+      autoMove(g, id);
+    }
+    arm(room);
+    push(room);
+  }, room.timer * 1000);
+}
 
 function push(room) {
   room.touched = Date.now();
@@ -51,16 +73,32 @@ const api = {
     const s = seat(code, token);
     if (!s) throw 'You are not in this room';
     const { room, i } = s;
-    if (move && move.type === 'start') {
-      if (i !== 0) throw 'Only the host can start';
-      if (room.game && room.game.phase !== 'over') throw 'Game in progress';
-      if (room.players.length < 2) throw 'Need at least 2 players';
-      room.game = newGame(room.players.map(p => p.name));
+    const type = move && move.type;
+    if (type === 'start' || type === 'timer' || type === 'kick') {
+      if (i !== 0) throw 'Only the host can do that';
+      const playing = room.game && room.game.phase !== 'over';
+      if (type === 'timer') {
+        if (![0, 30, 60].includes(move.seconds)) throw 'Bad timer';
+        room.timer = move.seconds;
+      } else if (type === 'kick') {
+        const t = move.target;
+        if (!Number.isInteger(t) || t < 1 || t >= room.players.length) throw 'Bad target';
+        if (room.game) { forfeit(room.game, t); room.players[t].kicked = true; } // seat ids must not shift mid-game
+        else drop(room.players.splice(t, 1)[0]);
+      } else {
+        if (playing) throw 'Game in progress';
+        const staying = room.players.filter(p => !p.kicked);
+        if (staying.length < 2) throw 'Need at least 2 players';
+        room.players.filter(p => p.kicked).forEach(drop);
+        room.players = staying;
+        room.game = newGame(staying.map(p => p.name));
+      }
     } else {
       if (!room.game) throw 'Game has not started';
       const err = act(room.game, i, move);
       if (err) throw err;
     }
+    arm(room);
     push(room);
     return {};
   },
@@ -88,7 +126,7 @@ http.createServer((req, res) => {
   if (name === 'events') {
     const s = seat(url.searchParams.get('code'), url.searchParams.get('token'));
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' });
-    if (!s) return res.end('event: gone\ndata: {}\n\n'); // tells the phone to forget this seat
+    if (!s) return res.end(GONE);
     const p = s.room.players[s.i];
     if (p.res) p.res.end();
     p.res = res;
@@ -109,6 +147,6 @@ http.createServer((req, res) => {
 setInterval(() => {
   for (const room of rooms.values()) {
     room.players.forEach(p => p.res && p.res.write(': ping\n\n')); // keeps tunnels and proxies from closing idle streams
-    if (Date.now() - room.touched > 6 * 3600e3) { room.players.forEach(p => p.res && p.res.end()); rooms.delete(room.code); }
+    if (Date.now() - room.touched > 6 * 3600e3) { clearTimeout(room.t); room.players.forEach(drop); rooms.delete(room.code); }
   }
 }, 25e3).unref();

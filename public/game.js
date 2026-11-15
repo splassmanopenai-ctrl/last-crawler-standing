@@ -70,6 +70,7 @@
 
   function openReact(g, canChallenge) {
     const c = g.cur, a = ACTIONS[c.action];
+    if (!alive(g.players[c.actor])) return endTurn(g); // actor was removed mid-action
     g.phase = 'react'; g.canChallenge = canChallenge;
     g.waiting = g.players
       .filter(p => alive(p) && p.id !== c.actor && (canChallenge || (a.blockBy && (c.target == null || c.target === p.id))))
@@ -77,20 +78,24 @@
     if (!g.waiting.length) resolve(g);
   }
 
+  function finish(g) {
+    const living = g.players.filter(alive);
+    if (living.length !== 1) return false;
+    g.phase = 'over'; g.winner = living[0].id;
+    say(g, `${living[0].name} is the Last Crawler Standing!`);
+    return true;
+  }
+
   function endTurn(g) {
     g.cur = g.block = g.offer = g.loser = null; g.waiting = [];
-    const living = g.players.filter(alive);
-    if (living.length === 1) {
-      g.phase = 'over'; g.winner = living[0].id;
-      say(g, `${living[0].name} is the Last Crawler Standing!`);
-      return;
-    }
+    if (finish(g)) return;
     do g.turn = (g.turn + 1) % g.players.length; while (!alive(g.players[g.turn]));
     g.phase = 'turn';
   }
 
   function resolve(g) {
     const c = g.cur, p = g.players[c.actor], t = g.players[c.target];
+    if (!alive(p)) return endTurn(g); // actor was removed mid-action
     switch (c.action) {
       case 'income': p.coins += 1; break;
       case 'aid': p.coins += 2; break;
@@ -198,5 +203,37 @@
     };
   }
 
-  Object.assign(exports, { ROLES, ACTIONS, newGame, act, view });
+  // Ids of the players the game cannot continue without.
+  function waitingOn(g) {
+    if (g.phase === 'turn') return [g.turn];
+    if (g.phase === 'react' || g.phase === 'blockReact') return g.waiting.slice();
+    if (g.phase === 'lose') return [g.loser];
+    if (g.phase === 'exchange') return [g.cur.actor];
+    return [];
+  }
+
+  // The dullest legal move, for a player who ran out of time or left.
+  function autoMove(g, pid) {
+    const p = g.players[pid];
+    if (g.phase === 'turn') {
+      const rival = g.players.find(x => x !== p && alive(x));
+      return act(g, pid, p.coins >= 10 ? { type: 'action', action: 'coup', target: rival.id } : { type: 'action', action: 'income' });
+    }
+    if (g.phase === 'lose') return act(g, pid, { type: 'lose', card: p.cards.findIndex(c => !c.revealed) });
+    if (g.phase === 'exchange') return act(g, pid, { type: 'exchange', keep: p.cards.filter(c => !c.revealed).map((_, i) => i) });
+    return act(g, pid, { type: 'pass' });
+  }
+
+  // Remove a player mid-game: settle anything they owe, then kill their cards.
+  function forfeit(g, pid) {
+    const p = g.players[pid];
+    for (let n = 0; n < 10 && waitingOn(g).includes(pid); n++) autoMove(g, pid);
+    if (g.phase === 'over' || !alive(p)) return;
+    p.cards.forEach(c => { c.revealed = true; });
+    say(g, `${p.name} has been dragged off the show.`);
+    if (g.phase === 'turn') finish(g);
+    else if (g.cur.actor === pid && g.phase !== 'lose') endTurn(g); // their pending action dies with them
+  }
+
+  Object.assign(exports, { ROLES, ACTIONS, newGame, act, view, waitingOn, autoMove, forfeit });
 })(typeof module !== 'undefined' ? module.exports : (window.Game = {}));

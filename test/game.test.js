@@ -1,6 +1,32 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { ACTIONS, ROLES, newGame, act, view } = require('../public/game.js');
+const { ACTIONS, ROLES, newGame, act, view, waitingOn, autoMove, forfeit } = require('../public/game.js');
+
+test('forfeit on your own turn passes the turn and kills you', () => {
+  const g = newGame(['A', 'B', 'C']);
+  g.turn = 0;
+  forfeit(g, 0);
+  assert.ok(g.players[0].cards.every(c => c.revealed));
+  assert.strictEqual(g.turn, 1);
+  assert.strictEqual(g.phase, 'turn');
+});
+
+test('forfeit with a pending action cancels it; last rival wins', () => {
+  const g = newGame(['A', 'B']);
+  g.turn = 0;
+  act(g, 0, { type: 'action', action: 'tax' });
+  forfeit(g, 0);
+  assert.strictEqual(g.phase, 'over');
+  assert.strictEqual(g.winner, 1);
+});
+
+test('auto-play alone always finishes a game', () => {
+  const g = newGame(['A', 'B', 'C', 'D']);
+  for (let i = 0; g.phase !== 'over'; i++) {
+    assert.ok(i < 2000);
+    assert.strictEqual(autoMove(g, waitingOn(g)[0]), undefined);
+  }
+});
 
 // Game with known hands; player 0 to move.
 function setup(hands, coins = 2) {
@@ -70,6 +96,9 @@ test('random play always ends with one winner and 15 cards', () => {
     const g = newGame(Array.from({ length: n }, (_, i) => 'P' + i));
     for (let i = 0; g.phase !== 'over'; i++) {
       assert.ok(i < 50000, 'game did not finish');
+      if (Math.random() < 0.01) forfeit(g, pick(g.players).id);
+      if (g.phase === 'over') break;
+      assert.ok(waitingOn(g).length && waitingOn(g).every(id => g.players[id].cards.some(c => !c.revealed)), 'waiting on nobody or a dead player');
       act(g, pick(g.players).id, pick([
         { type: 'action', action: pick(Object.keys(ACTIONS)), target: pick(g.players).id },
         { type: 'pass' }, { type: 'challenge' }, { type: 'block', role: pick(Object.keys(ROLES)) },

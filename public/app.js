@@ -17,6 +17,39 @@ function toast(msg) {
   toastTimer = setTimeout(() => { toastEl.textContent = ''; }, 3000);
 }
 
+// Sound: short synth beeps, no audio files. Browsers only allow audio after a tap, hence the pointerdown hook.
+let audio, wasMyMove = false, deadlineAt = null;
+const muted = () => localStorage.getItem('lcs-mute') === '1';
+addEventListener('pointerdown', () => {
+  audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+  if (audio.state === 'suspended') audio.resume();
+});
+function tone(freqs, dur = 0.12, type = 'square') {
+  if (!audio || muted()) return;
+  freqs.forEach((f, i) => {
+    const o = audio.createOscillator(), gain = audio.createGain(), t = audio.currentTime + i * dur;
+    o.type = type; o.frequency.value = f;
+    gain.gain.setValueAtTime(0.08, t); gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    o.connect(gain).connect(audio.destination);
+    o.start(t); o.stop(t + dur);
+  });
+}
+
+function tick() {
+  const el = document.getElementById('clock');
+  if (!el) return;
+  const s = deadlineAt ? Math.max(0, Math.ceil((deadlineAt - Date.now()) / 1000)) : null;
+  el.textContent = s == null ? '' : `⏱ ${s}s`;
+  el.classList.toggle('late', s != null && s <= 5);
+}
+setInterval(tick, 500);
+
+function kickBtn(i, name) {
+  const b = btn('✕', () => confirm(`Remove ${name} from the game?`) && send({ type: 'kick', target: i }), 'ghost mini');
+  b.setAttribute('aria-label', `Remove ${name}`);
+  return b;
+}
+
 async function post(path, body) {
   const r = await fetch('/api/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const j = await r.json();
@@ -28,7 +61,7 @@ const send = move => { picking = null; post('move', { ...session, move }).catch(
 function connect() {
   if (es) es.close();
   es = new EventSource(`/api/events?code=${session.code}&token=${session.token}`);
-  es.onmessage = e => { prev = v && v.game; v = JSON.parse(e.data); fresh = true; render(); fresh = false; };
+  es.onmessage = e => { prev = v && v.game; v = JSON.parse(e.data); deadlineAt = v.left == null ? null : Date.now() + v.left; fresh = true; render(); fresh = false; };
   // The server says "gone" when the room no longer exists. Plain errors are not trusted for this:
   // a page reload also fires one. Dropped connections retry on their own.
   es.addEventListener('gone', leave);
@@ -77,7 +110,15 @@ function renderLobby() {
     h('h1', {}, 'Last Crawler Standing'),
     h('div', { className: 'panel' }, h('h2', {}, 'Room code'), h('div', { className: 'big code' }, v.code), btn('Share invite link', share)),
     h('div', { className: 'panel' }, h('h2', {}, `Crawlers (${v.names.length}/6)`),
-      v.names.map((n, i) => h('div', { className: 'rival' }, h('span', { className: 'name' }, n), i === 0 && h('span', { className: 'pip' }, 'host'), i === v.you && h('span', { className: 'pip' }, 'you')))),
+      v.names.map((n, i) => h('div', { className: 'rival' }, h('span', { className: 'name' }, n), i === 0 && h('span', { className: 'pip' }, 'host'), i === v.you && h('span', { className: 'pip' }, 'you'), v.host && i > 0 && kickBtn(i, n)))),
+    v.host ? h('div', { className: 'panel' }, h('h2', {}, 'Move timer'),
+      h('div', { className: 'grid three' }, [0, 30, 60].map(s => {
+        const b = btn(s ? `${s}s` : 'Off', () => send({ type: 'timer', seconds: s }), v.timer === s ? '' : 'ghost');
+        b.setAttribute('aria-pressed', v.timer === s);
+        return b;
+      })),
+      h('p', { className: 'tag' }, 'When time runs out, a slow crawler passes or Grinds automatically.'))
+      : h('p', { className: 'tag' }, `Move timer: ${v.timer ? `${v.timer}s` : 'off'}`),
     v.host ? btn('Start the show', () => send({ type: 'start' }), 'hot', v.names.length < 2 ? 'Needs at least 2 crawlers' : null)
       : h('p', { className: 'tag' }, `Waiting for ${v.names[0]} to start the show…`),
     btn('Leave', leave, 'ghost'),
@@ -155,17 +196,26 @@ function renderGame() {
   const myMove = g.phase !== 'over' && my.cards.some(c => !c.revealed) &&
     ((g.phase === 'turn' && g.turn === me) || g.waiting.includes(me) || g.loser === me || !!g.offer);
   const deaths = g.players.flatMap(p => p.cards).filter(c => c.revealed).length; // viewers love bloodshed
+  if (fresh) {
+    if (g.phase === 'over' && (!prev || prev.phase !== 'over')) tone([523, 659, 784, 1047], 0.15);
+    else if (g.players.some(p => p.cards.some((c, i) => slam(p, i)))) tone([140, 90], 0.2, 'sawtooth');
+    if (myMove && !wasMyMove) { tone([660, 880]); if (navigator.vibrate) navigator.vibrate(150); }
+    wasMyMove = myMove;
+  }
+  const mute = btn(muted() ? '🔇' : '🔊', () => { localStorage.setItem('lcs-mute', muted() ? '0' : '1'); render(); }, 'ghost mini');
+  mute.setAttribute('aria-label', muted() ? 'Turn sound on' : 'Turn sound off');
   fill(app,
     g.phase === 'over' && fresh && h('div', { className: 'confetti' }, Array.from({ length: 16 }, (_, i) =>
       h('span', { style: `left:${(i * 37) % 100}%;animation-delay:${(i % 5) * 0.15}s` }, ['🎉', '🪙', '💀', '⭐'][i % 4]))),
-    h('div', { className: 'bar' }, h('h2', {}, h('span', { className: 'live' }, '● LIVE'), ' Last Crawler Standing'),
-      h('span', { className: 'tag' }, `👁 ${(2.4 + deaths * 1.7).toFixed(1)}M · ${v.code}`)),
+    h('div', { className: 'bar' }, h('h2', {}, h('span', { className: 'live' }, '● LIVE'), ` Room ${v.code}`),
+      h('span', { className: 'tag' }, `👁 ${(2.4 + deaths * 1.7).toFixed(1)}M watching`), mute),
     h('div', { id: 'announcer', className: news ? 'in' : '' }, h('b', {}, 'THE SYSTEM'), g.log[g.log.length - 1]),
     g.players.filter(p => p.id !== me).map(p => h('div', { className: `rival${g.turn === p.id && g.phase !== 'over' ? ' turn' : ''}${p.cards.every(c => c.revealed) ? ' dead' : ''}` },
       h('span', { className: 'name' }, p.name),
       p.cards.map((c, i) => h('span', { className: `pip${c.revealed ? ' gone' : ''}${slam(p, i)}` }, c.revealed ? `${ROLES[c.role].icon} ${ROLES[c.role].name}` : '🂠 hidden')),
-      h('span', { className: `gold${pop(p)}` }, `🪙 ${p.coins}`))),
-    h('div', { className: `panel${myMove ? ' myturn' : ''}` }, prompt(g, me)),
+      h('span', { className: `gold${pop(p)}` }, `🪙 ${p.coins}`),
+      v.host && g.phase !== 'over' && p.cards.some(c => !c.revealed) && kickBtn(p.id, p.name))),
+    h('div', { className: `panel${myMove ? ' myturn' : ''}` }, h('div', { id: 'clock', className: 'clock' }), prompt(g, me)),
     h('div', { className: 'bar' }, h('h2', {}, `${my.name} · your cards`), h('span', { className: `gold${pop(my)}` }, `🪙 ${my.coins}`)),
     h('div', { className: 'grid' }, my.cards.map((c, i) => card(c.role, (c.revealed ? 'gone' : '') + slam(my, i),
       g.phase === 'lose' && g.loser === me && !c.revealed ? () => send({ type: 'lose', card: i }) : null))),
@@ -182,6 +232,7 @@ function renderGame() {
 function render() {
   if (!session || !v) return session ? fill(app,h('p', { className: 'tag' }, 'Reconnecting…')) : renderJoin();
   v.game ? renderGame() : renderLobby();
+  tick();
 }
 
 document.addEventListener('visibilitychange', () => { if (!document.hidden && session && es && es.readyState === 2) connect(); });
