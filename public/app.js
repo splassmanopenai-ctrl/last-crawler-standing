@@ -197,7 +197,7 @@ function prompt(g, me) {
 
 function card(role, cls, onclick) {
   const b = h('button', { className: `card ${cls}`, onclick, disabled: !onclick },
-    h('div', { className: 'big' }, `${ROLES[role].icon} ${ROLES[role].name}`), h('small', {}, ROLES[role].text));
+    h('img', { src: `art/${role}.jpg`, alt: ROLES[role].name, width: 512, height: 304 }), h('small', {}, ROLES[role].text)); // the art carries the title
   if (onclick) b.setAttribute('aria-pressed', cls === 'on');
   return b;
 }

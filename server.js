@@ -5,7 +5,7 @@ const { newGame, act, view, waitingOn, autoMove, forfeit } = require('./public/g
 const PORT = process.env.PORT || 3000;
 const PASSCODE = process.env.PASSCODE || ''; // if set, required to create a room
 const PUBLIC = path.join(__dirname, 'public');
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8' };
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.jpg': 'image/jpeg' };
 const rooms = new Map(); // shortcut: in memory only, a restart ends all games; add storage if that ever matters
 
 const newCode = () => Array.from({ length: 5 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ'[crypto.randomInt(24)]).join('');
@@ -141,7 +141,7 @@ http.createServer((req, res) => {
   if (!file.startsWith(PUBLIC + path.sep)) return json(res, 403, { error: 'Nope' });
   fs.readFile(file, (err, data) => {
     if (err) return json(res, 404, { error: 'Not found' });
-    res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
+    res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream', 'Cache-Control': file.endsWith('.jpg') ? 'max-age=86400' : 'no-cache' });
     res.end(data);
   });
 }).listen(PORT, () => console.log(`Last Crawler Standing on http://localhost:${PORT}${PASSCODE ? ' (host passcode required)' : ''}`));
