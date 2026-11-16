@@ -42,6 +42,9 @@
   .card { padding:6px; min-height:0; }
   .card img { display:block; width:100%; height:auto; border-radius:7px; margin-bottom:6px; }
   .card.gone img { filter:grayscale(1); }
+  .card.play { border-color:var(--gold); animation:glow 1.4s ease-in-out infinite; }
+  .foot { display:block; margin-top:6px; font-size:13px; color:var(--gold); }
+  .card:disabled .foot { color:var(--dim); font-weight:400; }
   .card.gone { opacity:.4; text-decoration:line-through; }
   .card.on { border-color:var(--ok); box-shadow:0 0 0 2px var(--ok); }
   details { color:var(--dim); font-size:13px; }

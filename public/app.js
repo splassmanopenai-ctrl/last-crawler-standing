@@ -9,7 +9,7 @@ const btn = (label, onclick, cls = '', sub) => h('button', { onclick, className:
 
 let session = JSON.parse(localStorage.getItem(KEY) || 'null');
 let prev = null, fresh = false; // previous game view, and whether this render follows a server update
-let v = null, es = null, picking = null, keep = [], toastTimer;
+let v = null, es = null, picking = null, choosing = null, keep = [], toastTimer;
 
 function toast(msg) {
   toastEl.textContent = msg;
@@ -56,7 +56,7 @@ async function post(path, body) {
   if (!r.ok) throw new Error(j.error);
   return j;
 }
-const send = move => { picking = null; post('move', { ...session, move }).catch(e => toast(e.message)); };
+const send = move => { picking = choosing = null; post('move', { ...session, move }).catch(e => toast(e.message)); };
 
 function connect() {
   if (es) es.close();
@@ -150,13 +150,21 @@ function prompt(g, me) {
     if (picking) return say(`${ACTIONS[picking].name}: pick your victim`,
       h('div', { className: 'grid' }, g.players.filter(p => p.id !== me && isAlive(p)).map(p => btn(p.name, () => send({ type: 'action', action: picking, target: p.id }), 'hot', `${p.coins} gold`))),
       btn('Cancel', () => { picking = null; render(); }, 'ghost'));
-    return say(my.coins >= 10 ? 'Your turn. 10+ gold: you must Boss Drop.' : 'Your turn. Claim anything. Nobody checks unless they dare.',
-      h('div', { className: 'grid' }, Object.entries(ACTIONS).map(([id, act]) => {
-        const b = btn(act.name, () => { if (act.target) { picking = id; render(); } else send({ type: 'action', action: id }); },
-          act.claim ? '' : 'ghost', act.text + (act.claim ? ` · ${ROLES[act.claim].name} · ${held(act.claim)}` : ''));
-        b.disabled = my.coins < (act.cost || 0) || (my.coins >= 10 && id !== 'coup');
-        return b;
-      })));
+    const mk = ([id, act]) => {
+      const b = btn(act.name, () => start(id, act), act.claim ? '' : 'ghost', act.text + (act.claim ? ` · ${ROLES[act.claim].name}` : ''));
+      b.disabled = my.coins < (act.cost || 0) || (my.coins >= 10 && id !== 'coup');
+      return b;
+    };
+    const all = Object.entries(ACTIONS), holds = r => my.cards.some(x => !x.revealed && x.role === r);
+    if (choosing) return say(`${ROLES[choosing].name}: which move?`,
+      h('div', { className: 'grid' }, all.filter(([, a]) => a.claim === choosing).map(mk)),
+      btn('Cancel', () => { choosing = null; render(); }, 'ghost'));
+    // Honest plays live on your own cards below; this panel keeps the moves anyone can make, and the lies.
+    const bluffs = all.filter(([, a]) => a.claim && !holds(a.claim));
+    return say(my.coins >= 10 ? 'Your turn. 10+ gold: you must Boss Drop.' : 'Your turn. Tap one of your cards below to play it, or:',
+      h('div', { className: 'grid three' }, all.filter(([, a]) => !a.claim).map(mk)),
+      bluffs.length > 0 && h('h2', {}, "🤥 Or bluff a card you don't hold"),
+      h('div', { className: 'grid' }, bluffs.map(mk)));
   }
 
   if (g.phase === 'react') {
@@ -195,9 +203,15 @@ function prompt(g, me) {
   }
 }
 
-function card(role, cls, onclick) {
+// Begin an action: targeted ones go to the victim picker first.
+function start(id, act) {
+  if (act.target) { picking = id; choosing = null; render(); } else send({ type: 'action', action: id });
+}
+
+function card(role, cls, onclick, foot) {
   const b = h('button', { className: `card ${cls}`, onclick, disabled: !onclick },
-    h('img', { src: `art/${role}.jpg`, alt: ROLES[role].name, width: 512, height: 304 }), h('small', {}, ROLES[role].text)); // the art carries the title
+    h('img', { src: `art/${role}.jpg`, alt: ROLES[role].name, width: 512, height: 304 }), h('small', {}, ROLES[role].text), // the art carries the title
+    foot && h('b', { className: 'foot' }, foot));
   if (onclick) b.setAttribute('aria-pressed', cls === 'on');
   return b;
 }
@@ -205,7 +219,7 @@ function card(role, cls, onclick) {
 function renderGame() {
   const g = v.game, me = v.you, my = g.players[me];
   if (g.phase !== 'exchange') keep = [];
-  if (g.phase !== 'turn') picking = null;
+  if (g.phase !== 'turn') picking = choosing = null;
   // Animate only what changed in the update that just arrived, not on every local re-render.
   const old = fresh && prev && prev.players.length === g.players.length ? prev.players : null;
   const pop = p => old && old[p.id].coins !== p.coins ? ' pop' : '';
@@ -236,9 +250,20 @@ function renderGame() {
       v.host && g.phase !== 'over' && p.cards.some(c => !c.revealed) && kickBtn(p.id, p.name))),
     h('div', { className: `panel${myMove ? ' myturn' : ''}` }, h('div', { id: 'clock', className: 'clock' }), prompt(g, me)),
     h('div', { className: 'bar' }, h('h2', {}, `${my.name} · your cards`), h('span', { className: `gold${pop(my)}` }, `🪙 ${my.coins}`)),
-    h('div', { className: 'grid' }, my.cards.map((c, i) => card(c.role, (c.revealed ? 'gone' : '') + slam(my, i),
-      c.revealed ? null : g.phase === 'lose' && g.loser === me ? () => send({ type: 'lose', card: i })
-        : g.phase === 'show' && g.cur.target === me ? () => send({ type: 'show', card: i }) : null))),
+    h('div', { className: 'grid' }, my.cards.map((c, i) => {
+      if (c.revealed) return card(c.role, 'gone' + slam(my, i), null);
+      if (g.phase === 'lose' && g.loser === me) return card(c.role, '', () => send({ type: 'lose', card: i }));
+      if (g.phase === 'show' && g.cur.target === me) return card(c.role, '', () => send({ type: 'show', card: i }));
+      if (g.phase !== 'turn' || g.turn !== me || picking) return card(c.role, '', null);
+      // My turn: a card I hold plays its own action, truthfully.
+      const acts = Object.entries(actionsFor(g.variant)).filter(([, a]) => a.claim === c.role);
+      const can = acts.filter(([, a]) => my.coins >= (a.cost || 0));
+      if (!acts.length) return card(c.role, '', null, 'Blocks only');
+      if (my.coins >= 10) return card(c.role, '', null, 'Must Boss Drop');
+      if (!can.length) return card(c.role, '', null, `${acts[0][1].name} needs ${acts[0][1].cost} gold`);
+      return card(c.role, 'play', () => { if (can.length > 1) { choosing = c.role; render(); } else start(...can[0]); },
+        `▶ ${can.map(([, a]) => a.name).join(' / ')}`);
+    })),
     h('details', {}, h('summary', {}, 'Show log'), g.log.slice().reverse().map(l => h('p', {}, l))),
     h('details', {}, h('summary', {}, 'Rules'),
       h('p', {}, 'Everyone has 2 hidden cards. Lose both and you are dead. Last one alive wins.'),
