@@ -6,4 +6,9 @@ services:
       - "3000:3000"
     environment:
       PASSCODE: ${PASSCODE:-}
+    volumes:
+      - players:/app/data # saved players survive rebuilds
     restart: unless-stopped
+
+volumes:
+  players:

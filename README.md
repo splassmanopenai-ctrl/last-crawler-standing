@@ -62,6 +62,14 @@ On your turn pick one action. You may claim **any** role, whether you hold it or
 
 Sound and vibration cue your turn; the speaker button in the header mutes it.
 
+## Saved players and invites
+
+- The first time you enter a name, your phone becomes your player: it keeps a private key and the server remembers you. There is no password or sign-up.
+- When a game starts, everyone in it is added to each other's "players you know" list.
+- In a lobby, tap **Invite** next to someone you know. They see "You're invited" with a Join button on the home screen the next time they have the game open.
+- New phone? Open **Switching phones?** on the home screen and copy your player code across. Clearing the browser's site data without the code means starting as a new player.
+- Players are stored in `data/players.json` (`DATA_DIR` changes the folder); in Docker this is the `players` volume. Secrets are stored hashed.
+
 ## Changing the theme
 
 Every role name, action name and announcer line lives at the top of [public/game.js](public/game.js). Card art is one image per role in `public/art/`, named after the role's key in that file (512×304 JPEG).
@@ -76,4 +84,4 @@ node --test
 - `server.js` — rooms and per-player views (the server never sends you another player's hidden cards)
 - `public/app.js`, `public/index.html` — the phone UI
 
-Known limits: games live in memory, so restarting the server ends them. A player who closes their browser for good stalls the game unless a move timer is on or the host removes them; reopening the page on the same phone puts them back in their seat.
+Known limits: games live in memory, so restarting the server ends them (saved players are kept). A player who closes their browser for good stalls the game unless a move timer is on or the host removes them; reopening the page on the same phone puts them back in their seat.

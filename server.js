@@ -8,11 +8,49 @@ const PUBLIC = path.join(__dirname, 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.jpg': 'image/jpeg' };
 const rooms = new Map(); // shortcut: in memory only, a restart ends all games; add storage if that ever matters
 
+// Saved players: who has played here and who they have played with. Rooms and games stay in memory.
+// shortcut: one JSON file rewritten on change, fine for a friends-sized group; move to SQLite if it grows.
+const DATA = path.join(process.env.DATA_DIR || path.join(__dirname, 'data'), 'players.json');
+const players = Object.create(null); // id -> { name, key: sha256 of the phone's secret, known: { id: lastPlayedMs } }
+try { Object.assign(players, JSON.parse(fs.readFileSync(DATA, 'utf8'))); } catch { /* first run */ }
+const invites = new Map(); // player id -> [{ code, from }]; in memory, since rooms are too
+let saving;
+function save() {
+  clearTimeout(saving);
+  saving = setTimeout(() => {
+    try {
+      fs.mkdirSync(path.dirname(DATA), { recursive: true });
+      fs.writeFileSync(DATA + '.tmp', JSON.stringify(players));
+      fs.renameSync(DATA + '.tmp', DATA); // rename is atomic: a crash never leaves half a file
+    } catch (e) { console.error('Could not save players:', e.message); }
+  }, 200);
+}
+const hash = s => crypto.createHash('sha256').update(String(s)).digest();
+const cleanName = name => String(name || '').trim().slice(0, 16);
+
+// A phone proves who it is with the id and secret it was given on first visit.
+function auth(player) {
+  const p = player && typeof player.id === 'string' && players[player.id];
+  return p && crypto.timingSafeEqual(Buffer.from(p.key, 'hex'), hash(player.secret)) ? player.id : null;
+}
+
+const openInvites = id => (invites.get(id) || []).filter(v => rooms.has(v.code) && !rooms.get(v.code).game && rooms.get(v.code).players.length < 6);
+
+function friendsOf(room, pid) {
+  if (!pid) return [];
+  return Object.entries(players[pid].known).filter(([id]) => players[id]).sort((a, b) => b[1] - a[1]).slice(0, 30).map(([id]) => ({
+    id, name: players[id].name,
+    here: room.players.some(p => p.pid === id),
+    invited: (invites.get(id) || []).some(v => v.code === room.code),
+  }));
+}
+
 const newCode = () => Array.from({ length: 5 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ'[crypto.randomInt(24)]).join('');
 
 const roomView = (room, i) => ({
   code: room.code, you: i, host: i === 0, names: room.players.map(p => p.name),
   game: room.game ? view(room.game, i) : null,
+  friends: room.game ? [] : friendsOf(room, room.players[i].pid),
   timer: room.timer || 0, variant: !!room.variant, left: room.deadline ? room.deadline - Date.now() : null, // ms left, so phone clocks need not agree
 });
 
@@ -49,9 +87,37 @@ function seat(code, token) {
 }
 
 const api = {
-  join({ code, name, passcode }) {
-    name = String(name || '').trim().slice(0, 16);
+  // Who am I? Creates a saved player on first visit (when a name is given), and lists waiting invites.
+  hello({ player, name }) {
+    let id = auth(player), secret;
+    name = cleanName(name);
+    if (!id) {
+      if (!name) return { known: false };
+      id = crypto.randomBytes(8).toString('hex');
+      secret = crypto.randomBytes(16).toString('hex');
+      players[id] = { name, key: hash(secret).toString('hex'), known: {} };
+      save();
+    } else if (name && name !== players[id].name) { players[id].name = name; save(); }
+    return { known: true, id, secret, name: players[id].name, invites: openInvites(id) };
+  },
+
+  // Invite someone you have played with before into the room you are sitting in.
+  invite({ code, token, to }) {
+    const s = seat(code, token);
+    if (!s) throw 'You are not in this room';
+    const from = s.room.players[s.i];
+    if (s.room.game) throw 'That game has already started';
+    if (!from.pid || typeof to !== 'string' || !players[from.pid].known[to]) throw 'You can only invite players you have played with';
+    const list = (invites.get(to) || []).filter(v => v.code !== s.room.code).slice(-9);
+    invites.set(to, [...list, { code: s.room.code, from: from.name }]);
+    push(s.room);
+    return {};
+  },
+
+  join({ code, name, passcode, player }) {
+    name = cleanName(name);
     if (!name) throw 'Enter a name';
+    const pid = auth(player);
     let room;
     if (code) {
       room = rooms.get(String(code).trim().toUpperCase());
@@ -64,7 +130,8 @@ const api = {
       rooms.set(room.code, room);
     }
     const token = crypto.randomBytes(16).toString('hex');
-    room.players.push({ name, token, res: null });
+    room.players.push({ name, token, res: null, pid });
+    if (pid) invites.set(pid, (invites.get(pid) || []).filter(v => v.code !== room.code));
     push(room);
     return { code: room.code, token };
   },
@@ -94,6 +161,9 @@ const api = {
         room.players.filter(p => p.kicked).forEach(drop);
         room.players = staying;
         room.game = newGame(staying.map(p => p.name), Math.random, !!room.variant);
+        const pids = [...new Set(staying.map(p => p.pid).filter(Boolean))]; // everyone here has now played together
+        for (const a of pids) for (const b of pids) if (a !== b) players[a].known[b] = Date.now();
+        if (pids.length > 1) save();
       }
     } else {
       if (!room.game) throw 'Game has not started';

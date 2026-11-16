@@ -74,10 +74,50 @@ function leave() {
   render();
 }
 
+// Saved player: this phone's id and secret, issued by the server on first visit. No password, no sign-up.
+const ME = 'lcs-player';
+let me = JSON.parse(localStorage.getItem(ME) || 'null'), profile = null, prefilled = false;
+
+async function hello(name) {
+  const r = await post('hello', { player: me, name });
+  if (!r.known) { me = profile = null; localStorage.removeItem(ME); return; }
+  if (r.secret) { me = { id: r.id, secret: r.secret }; localStorage.setItem(ME, JSON.stringify(me)); }
+  profile = r;
+}
+
+// Home screen only: fetch my saved name and any invites, without re-rendering the form being typed in.
+async function refreshHome() {
+  if (session || !me || document.hidden) return;
+  try { await hello(); } catch { return; }
+  const box = document.getElementById('invites'), name = document.getElementById('name');
+  if (!box || !profile) return;
+  if (!prefilled && !name.value) name.value = profile.name;
+  prefilled = true;
+  fill(box, profile.invites.length > 0 && h('div', { className: 'panel myturn' }, h('h2', {}, "You're invited"),
+    profile.invites.map(i => btn(`Join ${i.from}'s room`, () => join(i.code), 'hot', `Room ${i.code}`))));
+}
+setInterval(refreshHome, 5000);
+
+async function usePlayerCode(text) {
+  const [id, secret] = text.trim().split('.'), old = me;
+  me = { id, secret };
+  try { await hello(); } catch { me = null; }
+  if (!me) {
+    me = old;
+    if (old) localStorage.setItem(ME, JSON.stringify(old));
+    return toast('That player code is not valid');
+  }
+  localStorage.setItem(ME, JSON.stringify(me));
+  toast(`Welcome back, ${profile.name}`);
+  render();
+}
+
 async function join(code) {
   try {
     const name = document.getElementById('name').value, passcode = document.getElementById('pass').value;
-    session = await post('join', { name, code, passcode });
+    if (!name.trim()) return toast('Enter a name');
+    await hello(name); // creates this phone's saved player on first visit, or renames it
+    session = await post('join', { name, code, passcode, player: me });
     localStorage.setItem(KEY, JSON.stringify(session));
     connect();
   } catch (e) { toast(e.message); }
@@ -91,15 +131,25 @@ function renderJoin() {
   name.setAttribute('aria-label', 'Your crawler name');
   const pass = h('input', { id: 'pass', placeholder: 'Host passcode', type: 'password', autocomplete: 'off' });
   pass.setAttribute('aria-label', 'Host passcode');
+  const mine = h('input', { readOnly: true, value: me ? `${me.id}.${me.secret}` : '', onfocus: e => e.target.select() });
+  mine.setAttribute('aria-label', 'My player code');
+  const theirs = h('input', { placeholder: 'Paste player code', autocomplete: 'off' });
+  theirs.setAttribute('aria-label', 'Player code from another phone');
+  prefilled = false;
   fill(app,
     h('h1', {}, 'Last Crawler Standing'),
     h('p', { className: 'tag' }, 'Lie. Loot. Backstab. The whole galaxy is watching.'),
+    h('div', { id: 'invites' }),
     h('div', { className: 'panel' }, name),
     h('div', { className: 'panel' }, h('h2', {}, 'Got an invite?'), code,
       btn('Join room', () => code.value.trim() ? join(code.value) : toast('Enter the room code'))),
     h('div', { className: 'panel' }, h('h2', {}, 'Or host'), btn('Host a new game', () => join(''), 'hot'),
       h('details', {}, h('summary', {}, 'My server needs a passcode'), pass)),
+    h('details', {}, h('summary', {}, 'Switching phones?'),
+      me && h('p', {}, 'This phone is your player. To move it, copy this code to the other phone. Keep it private.'), me && mine,
+      h('p', {}, 'Have a code from your other phone?'), theirs, btn('Use this code', () => usePlayerCode(theirs.value), 'ghost')),
   );
+  refreshHome();
 }
 
 function renderLobby() {
@@ -126,6 +176,11 @@ function renderLobby() {
       })),
       h('p', { className: 'tag' }, v.variant ? `${ROLES.paparazzo.icon} Paparazzo replaces the Changeling. ${ROLES.paparazzo.text}` : `${ROLES.changeling.icon} Changeling. ${ROLES.changeling.text}`))
       : h('p', { className: 'tag' }, `Move timer: ${v.timer ? `${v.timer}s` : 'off'} · Card set: ${v.variant ? 'Paparazzo' : 'Classic'}`),
+    v.friends.length > 0 && h('div', { className: 'panel' }, h('h2', {}, 'Invite players you know'),
+      v.friends.map(f => h('div', { className: 'rival' }, h('span', { className: 'name' }, f.name),
+        f.here ? h('span', { className: 'pip' }, 'here') : f.invited ? h('span', { className: 'pip' }, 'invited ✓')
+          : btn('Invite', () => post('invite', { ...session, to: f.id }).catch(e => toast(e.message)), 'mini wide'))),
+      h('p', { className: 'tag' }, 'They see the invite when they open the game.')),
     v.host ? btn('Start the show', () => send({ type: 'start' }), 'hot', v.names.length < 2 ? 'Needs at least 2 crawlers' : null)
       : h('p', { className: 'tag' }, `Waiting for ${v.names[0]} to start the show…`),
     btn('Leave', leave, 'ghost'),
