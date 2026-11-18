@@ -43,11 +43,11 @@ On your turn pick one action. You may claim **any** role, whether you hold it or
 | Action | Effect | Needs | Blocked by |
 |---|---|---|---|
 | Grind | +1 gold | — | — |
-| Fan Donations | +2 gold | — | Showrunner |
-| Sponsor Deal | +3 gold | Showrunner | — |
-| Yoink | Steal 2 gold | Loot Goblin | Loot Goblin, Changeling |
-| Respec | Draw 2, keep the same number you had | Changeling | — |
-| Shiv | Pay 3, a rival loses a card | Backstabber | Bouncer |
+| Fan Donations | +2 gold | — | Princess Donut |
+| Sponsor Deal | +3 gold | Princess Donut | — |
+| Yoink | Steal 2 gold | Mongo | Mongo, Zev |
+| Respec | Draw 2, keep the same number you had | Zev | — |
+| Shiv | Pay 3, a rival loses a card | Carl | Mordecai |
 | Boss Drop | Pay 7, a rival loses a card | — | nothing |
 
 - **Call the bluff:** anyone can challenge a role claim, including a block. If the claimant lied they lose a card. If they told the truth, the challenger loses one and the claimant swaps the proven card for a fresh one.
@@ -57,7 +57,7 @@ On your turn pick one action. You may claim **any** role, whether you hold it or
 ## Host controls
 
 - **Move timer** (lobby): Off, 30s or 60s. When it runs out, anyone being waited on makes the dullest legal move: pass, Grind, or lose their first card.
-- **Card set** (lobby): Classic, or the Paparazzo variant. The Paparazzo replaces the Changeling: Respec swaps only 1 card, and Exposé lets you see one of a rival's cards (they choose which) and decide whether they must redraw it. The Paparazzo also blocks Yoink.
+- **Card set** (lobby): Classic, or the Odette variant. Odette replaces Zev: Respec swaps only 1 card, and Exposé lets you see one of a rival's cards (they choose which) and decide whether they must redraw it. Odette also blocks Yoink.
 - **Remove a player** (✕ next to their name): in the lobby it frees the seat; mid-game it kills their cards and they sit out the rematch.
 
 Sound and vibration cue your turn; the speaker button in the header mutes it.

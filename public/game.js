@@ -1,12 +1,12 @@
 // Rules engine and all theme text. The server is the authority; the browser only reads ROLES/ACTIONS for labels.
 (function (exports) {
   const ROLES = {
-    showrunner: { name: 'Showrunner', color: '#f5b921', text: 'Sponsor Deal: take 3 gold. Blocks Fan Donations.' },
-    backstabber: { name: 'Backstabber', color: '#e0433f', text: 'Shiv: pay 3 gold, a rival loses a card.' },
-    goblin: { name: 'Loot Goblin', color: '#7cc142', text: 'Yoink: steal 2 gold. Blocks Yoink.' },
-    changeling: { name: 'Changeling', color: '#b07ae6', text: 'Respec: swap cards with the deck. Blocks Yoink.' },
-    paparazzo: { name: 'Paparazzo', color: '#f28c28', text: 'Respec: swap 1 card with the deck. Exposé: see a rival\'s card and maybe make them redraw it. Blocks Yoink.' },
-    bouncer: { name: 'Bouncer', color: '#4aa3e8', text: 'Safe Room: blocks Shiv.' },
+    showrunner: { name: 'Princess Donut', color: '#f5b921', text: 'Sponsor Deal: take 3 gold. Blocks Fan Donations.' },
+    backstabber: { name: 'Carl', color: '#e0433f', text: 'Shiv: pay 3 gold, a rival loses a card.' },
+    goblin: { name: 'Mongo', color: '#7cc142', text: 'Yoink: steal 2 gold. Blocks Yoink.' },
+    changeling: { name: 'Zev', color: '#b07ae6', text: 'Respec: swap cards with the deck. Blocks Yoink.' },
+    paparazzo: { name: 'Odette', color: '#f28c28', text: 'Respec: swap 1 card with the deck. Exposé: see a rival\'s card and maybe make them redraw it. Blocks Yoink.' },
+    bouncer: { name: 'Mordecai', color: '#4aa3e8', text: 'Safe Room: blocks Shiv.' },
   };
 
   const ACTIONS = {

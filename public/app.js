@@ -178,12 +178,12 @@ function renderLobby() {
       h('p', { className: 'tag' }, 'When time runs out, a slow crawler passes or Grinds automatically.'),
       h('h2', {}, 'Card set'),
       h('div', { className: 'grid' }, [false, true].map(on => {
-        const b = btn(on ? 'Paparazzo' : 'Classic', () => send({ type: 'variant', on }), v.variant === on ? '' : 'ghost');
+        const b = btn(on ? 'Odette' : 'Classic', () => send({ type: 'variant', on }), v.variant === on ? '' : 'ghost');
         b.setAttribute('aria-pressed', v.variant === on);
         return b;
       })),
-      h('p', { className: 'tag' }, v.variant ? `The Paparazzo replaces the Changeling. ${ROLES.paparazzo.text}` : `Includes the Changeling. ${ROLES.changeling.text}`))
-      : h('p', { className: 'tag' }, `${v.timer ? `${v.timer}s move timer` : 'No move timer'}. ${v.variant ? 'Paparazzo' : 'Classic'} card set.`),
+      h('p', { className: 'tag' }, v.variant ? `${ROLES.paparazzo.name} replaces ${ROLES.changeling.name}. ${ROLES.paparazzo.text}` : `Includes ${ROLES.changeling.name}. ${ROLES.changeling.text}`))
+      : h('p', { className: 'tag' }, `${v.timer ? `${v.timer}s move timer` : 'No move timer'}. ${v.variant ? ROLES.paparazzo.name : 'Classic'} card set.`),
     v.friends.length > 0 && h('div', { className: 'group' }, h('h2', {}, 'Invite players you know'),
       v.friends.map(f => h('div', { className: 'rival' }, h('span', { className: 'name' }, f.name),
         f.here ? h('span', { className: 'note' }, 'here') : f.invited ? h('span', { className: 'note' }, 'invited')
