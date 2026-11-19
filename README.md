@@ -72,7 +72,7 @@ Sound and vibration cue your turn; the speaker button in the header mutes it.
 
 ## Changing the theme
 
-Every role name, action name and announcer line lives at the top of [public/game.js](public/game.js). Card art is one image per role in `public/art/`, named after the role's key in that file (512×304 JPEG).
+Every role name, action name and announcer line lives at the top of [public/game.js](public/game.js). Card art (bump the `?v=` number in `public/app.js` when you replace it, since phones cache images for a day) is one image per role in `public/art/`, named after the role's key in that file (480×562 JPEG, the whole card).
 
 ## Development
 

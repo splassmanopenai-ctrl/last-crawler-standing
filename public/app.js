@@ -279,7 +279,7 @@ function start(id, act) {
 
 function card(role, cls, onclick, foot) {
   const b = h('button', { className: `card ${cls}`, onclick, disabled: !onclick },
-    h('img', { src: `art/${role}.jpg`, alt: ROLES[role].name, width: 512, height: 304 }), h('small', {}, ROLES[role].text), // the art carries the title
+    h('img', { src: `art/${role}.jpg?v=2`, alt: ROLES[role].name, width: 480, height: 562 }), h('small', {}, ROLES[role].text), // the art carries the title
     foot && h('b', { className: 'foot' }, foot));
   if (onclick) b.setAttribute('aria-pressed', cls === 'on');
   return b;
