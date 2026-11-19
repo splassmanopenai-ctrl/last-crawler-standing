@@ -65,9 +65,7 @@
   .foot { margin-top:auto; padding:7px 8px; font-size:13px; border-top:2px dashed var(--ink); font-weight:400; color:var(--muted); }
   .card.play .foot { background:var(--gold); color:var(--ink); font-weight:700; text-align:center; border-top-style:solid; }
   .card.on { outline:4px solid var(--gold); outline-offset:1px; }
-  .card.gone img, .card.gone small { filter:grayscale(1); opacity:.5; }
-  .card.gone::after { content:"Dead"; position:absolute; top:30%; left:50%; transform:translate(-50%,-50%) rotate(-12deg);
-    font:italic 800 26px var(--display); text-transform:uppercase; color:var(--blood); background:var(--paper); border:3px solid var(--blood); padding:0 10px; }
+  .card.gone small { opacity:.55; text-decoration:line-through; }
 
   .clock { align-self:flex-end; font-weight:700; font-variant-numeric:tabular-nums; }
   .clock:empty { display:none; }

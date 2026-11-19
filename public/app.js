@@ -279,7 +279,9 @@ function start(id, act) {
 
 function card(role, cls, onclick, foot) {
   const b = h('button', { className: `card ${cls}`, onclick, disabled: !onclick },
-    h('img', { src: `art/${role}.jpg?v=2`, alt: ROLES[role].name, width: 480, height: 562 }), h('small', {}, ROLES[role].text), // the art carries the title
+    // Revealed cards use the defeated version of the art. The art has no name banner, so the name goes in the text.
+    h('img', { src: `art/${role}${cls.includes('gone') ? '-dead' : ''}.jpg?v=3`, alt: '', width: 256, height: 512 }),
+    h('small', {}, h('b', {}, ROLES[role].name), ' ', ROLES[role].text),
     foot && h('b', { className: 'foot' }, foot));
   if (onclick) b.setAttribute('aria-pressed', cls === 'on');
   return b;
