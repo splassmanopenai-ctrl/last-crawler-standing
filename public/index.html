@@ -80,6 +80,8 @@
   #toast:empty { display:none; }
 
   /* Motion: only in answer to an event. */
+  #announcer { display:flex; flex-direction:column; gap:4px; }
+  #announcer p:not(:last-child) { font-weight:400; }
   #announcer.in { animation:slidein .3s ease-out; }
   .pop { animation:pop .45s ease-out; }
   .slam { animation:slam .6s ease-out; }

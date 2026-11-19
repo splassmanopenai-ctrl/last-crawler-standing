@@ -133,3 +133,14 @@ test('classic game rejects the variant-only action', () => {
   g.turn = 0;
   assert.ok(act(g, 0, { type: 'action', action: 'examine', target: 1 }));
 });
+
+test('a bluffed block on a Shiv, when called, costs the target both cards', () => {
+  const g = setup([['backstabber', 'goblin'], ['goblin', 'showrunner'], ['goblin', 'goblin']], 3);
+  ok(g, 0, { type: 'action', action: 'assassinate', target: 1 });
+  ok(g, 1, { type: 'block', role: 'bouncer' });
+  ok(g, 0, { type: 'challenge' });
+  const logAt = g.log.length;
+  ok(g, 1, { type: 'lose', card: 0 }); // one tap...
+  assert.ok(g.players[1].cards.every(c => c.revealed)); // ...both cards: one for the lie, one for the Shiv
+  assert.deepStrictEqual(g.log.slice(logAt).map(l => l.split(' ')[0] + ' ' + l.split(' ')[1]), ['P1 loses', 'Shiv lands', 'P1 loses'], 'both losses, and why, are announced');
+});

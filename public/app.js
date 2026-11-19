@@ -9,6 +9,7 @@ const btn = (label, onclick, cls = '', sub) => h('button', { onclick, className:
 
 let session = JSON.parse(localStorage.getItem(KEY) || 'null');
 let prev = null, fresh = false; // previous game view, and whether this render follows a server update
+let headlines = []; // every announcer line the latest update added, so chained events are all shown
 let v = null, es = null, picking = null, choosing = null, keep = [], toastTimer;
 
 function toast(msg) {
@@ -236,9 +237,12 @@ function prompt(g, me) {
     const what = a.claim ? `${name(c.actor)} claims ${ROLES[a.claim].name} to use ${a.name}${onWhom}.` : `${name(c.actor)} is taking ${a.name}.`;
     if (!g.waiting.includes(me)) return say(what, h('p', { className: 'tag' }, waitingOn()));
     const canBlock = a.blockBy && (c.target == null || c.target === me);
+    const shivOnMe = c.action === 'assassinate' && c.target === me && my.cards.filter(x => !x.revealed).length === 2;
     return say(what, h('div', { className: 'grid' },
-      g.canChallenge && btn('Call the bluff', () => send({ type: 'challenge' }), 'hot', "If you're wrong, you lose a card"),
-      canBlock && a.blockBy.map(r => Object.assign(btn(`Block as ${ROLES[r].name}`, () => send({ type: 'block', role: r }), '', held(r)), { style: `background:${ROLES[r].color}` })),
+      // A Shiv aimed at you is the one move where a single mistake costs both cards.
+      g.canChallenge && btn('Call the bluff', () => send({ type: 'challenge' }), 'hot', shivOnMe ? "If you're wrong, you lose a card and the Shiv still lands" : "If you're wrong, you lose a card"),
+      canBlock && a.blockBy.map(r => Object.assign(btn(`Block as ${ROLES[r].name}`, () => send({ type: 'block', role: r }), '',
+        shivOnMe && held(r) === 'A bluff' ? 'A bluff. If called, you lose both cards' : held(r)), { style: `background:${ROLES[r].color}` })),
       btn('Let it happen', () => send({ type: 'pass' }), 'ghost')));
   }
 
@@ -290,6 +294,10 @@ function renderGame() {
   const pop = p => old && old[p.id].coins !== p.coins ? ' pop' : '';
   const slam = (p, i) => old && p.cards[i].revealed && !old[p.id].cards[i].revealed ? ' slam' : '';
   const news = fresh && (!prev || prev.log[prev.log.length - 1] !== g.log[g.log.length - 1]);
+  if (news) {
+    const from = prev ? g.log.lastIndexOf(prev.log[prev.log.length - 1]) + 1 : g.log.length - 1;
+    headlines = g.log.slice(Math.max(from, g.log.length - 4));
+  } else if (!headlines.length) headlines = g.log.slice(-1);
   const myMove = g.phase !== 'over' && my.cards.some(c => !c.revealed) &&
     ((g.phase === 'turn' && g.turn === me) || g.waiting.includes(me) || g.loser === me || !!g.offer ||
       (g.phase === 'show' && g.cur.target === me) || (g.phase === 'peek' && g.cur.actor === me));
@@ -306,7 +314,7 @@ function renderGame() {
     g.phase === 'over' && fresh && h('div', { className: 'confetti' }, Array.from({ length: 16 }, (_, i) =>
       h('span', { style: `left:${(i * 37) % 100}%;animation-delay:${(i % 5) * 0.15}s;background:${Object.values(ROLES)[i % 6].color}` }))),
     h('div', { className: 'bar' }, h('div', {}, h('h2', {}, `Room ${v.code}`), h('p', { className: 'tag' }, `Live to ${(2.4 + deaths * 1.7).toFixed(1)}M viewers`)), mute),
-    h('div', { id: 'announcer', className: news ? 'in' : '' }, g.log[g.log.length - 1]),
+    h('div', { id: 'announcer', className: news ? 'in' : '' }, headlines.map(l => h('p', {}, l))),
     g.players.filter(p => p.id !== me).map(p => h('div', { className: `rival${g.turn === p.id && g.phase !== 'over' ? ' turn' : ''}${p.cards.every(c => c.revealed) ? ' dead' : ''}` },
       h('span', { className: 'name' }, p.name),
       p.cards.map((c, i) => c.revealed ? chip(c.role, slam(p, i)) : Object.assign(h('span', { className: 'back' }), { title: 'Hidden card' })),

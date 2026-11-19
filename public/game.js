@@ -112,7 +112,9 @@
       case 'aid': p.coins += 2; break;
       case 'tax': p.coins += 3; break;
       case 'steal': { const n = Math.min(2, t.coins); t.coins -= n; p.coins += n; break; }
-      case 'coup': case 'assassinate': return lose(g, c.target, () => endTurn(g));
+      case 'coup': case 'assassinate':
+        say(g, `${A(g)[c.action].name} lands on ${t.name}.`);
+        return lose(g, c.target, () => endTurn(g));
       case 'exchange':
         g.offer = [...p.cards.filter(x => !x.revealed).map(x => x.role), g.deck.pop()];
         if (!g.variant) g.offer.push(g.deck.pop());
