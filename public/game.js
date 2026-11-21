@@ -1,12 +1,13 @@
-// Rules engine and all theme text. The server is the authority; the browser only reads ROLES/ACTIONS for labels.
+// Rules engine and all theme text. `blurb` is the line printed on the card's blank parchment. The server is the authority; the browser only reads ROLES/ACTIONS for labels.
 (function (exports) {
+  // quip: a one-liner shown in italics under the card; empty strings are skipped.
   const ROLES = {
-    showrunner: { name: 'Princess Donut', color: '#f5b921', text: 'Sponsor Deal: take 3 gold. Blocks Fan Donations.' },
-    backstabber: { name: 'Carl', color: '#e0433f', text: 'Shiv: pay 3 gold, a rival loses a card.' },
-    goblin: { name: 'Mongo', color: '#7cc142', text: 'Yoink: steal 2 gold. Blocks Yoink.' },
-    changeling: { name: 'Zev', color: '#b07ae6', text: 'Respec: swap cards with the deck. Blocks Yoink.' },
-    paparazzo: { name: 'Odette', color: '#f28c28', text: 'Respec: swap 1 card with the deck. Exposé: see a rival\'s card and maybe make them redraw it. Blocks Yoink.' },
-    bouncer: { name: 'Mordecai', color: '#4aa3e8', text: 'Safe Room: blocks Shiv.' },
+    showrunner: { name: 'Princess Donut', title: 'The Headliner', quip: '', blurb: 'Sponsor Deal: Take 3 gold. Blocks Fan Donations.', color: '#f5b921', text: 'Sponsor Deal: take 3 gold. Blocks Fan Donations.' },
+    backstabber: { name: 'Carl', title: 'The Demolitionist', quip: '', blurb: 'Shiv: Pay 3 gold, a rival loses a card.', color: '#e0433f', text: 'Shiv: pay 3 gold, a rival loses a card.' },
+    goblin: { name: 'Mongo', title: 'The Retriever', quip: '', blurb: 'Yoink: Steal 2 gold. Blocks stealing.', color: '#7cc142', text: 'Yoink: steal 2 gold. Blocks Yoink.' },
+    changeling: { name: 'Zev', title: 'The Handler', quip: '', blurb: 'Respec: Exchange influence cards with the Court deck. Blocks stealing.', color: '#b07ae6', text: 'Respec: swap cards with the deck. Blocks Yoink.' },
+    paparazzo: { name: 'Odette', title: 'Exposé Queen', quip: '', blurb: 'Exposé: Inspect one rival\'s card (they choose which). Also blocks stealing.', color: '#f28c28', text: 'Respec: swap 1 card with the deck. Exposé: see a rival\'s card and maybe make them redraw it. Blocks Yoink.' },
+    bouncer: { name: 'Mordecai', title: 'The Alchemist', quip: '', blurb: 'Blocks Assassination Attempts.', color: '#4aa3e8', text: 'Safe Room: blocks Shiv.' },
   };
 
   const ACTIONS = {

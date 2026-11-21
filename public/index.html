@@ -60,12 +60,18 @@
   .card { position:relative; display:flex; flex-direction:column; overflow:hidden; min-height:0; padding:0; text-align:left; font-weight:400;
           background:var(--paper); color:var(--ink); border:3px solid var(--ink); border-radius:10px; box-shadow:4px 4px 0 var(--ink); }
   .card:disabled { opacity:1; box-shadow:4px 4px 0 var(--ink); }
+  .art { position:relative; container-type:inline-size; }
+  .slot { position:absolute; display:flex; align-items:center; justify-content:center; text-align:center; overflow:hidden;
+          font:700 6.4cqw/1.15 var(--body); color:var(--ink); text-wrap:balance; }
+  .card.gone .slot { opacity:.55; }
   .card img { display:block; width:100%; height:auto; border-bottom:3px solid var(--ink); }
   .card small { display:block; margin:0; padding:6px 8px; font-size:12.5px; line-height:1.35; }
+  .card q { display:block; margin-top:3px; font-style:italic; quotes:'“' '”'; }
   .foot { margin-top:auto; padding:7px 8px; font-size:13px; border-top:2px dashed var(--ink); font-weight:400; color:var(--muted); }
   .card.play .foot { background:var(--gold); color:var(--ink); font-weight:700; text-align:center; border-top-style:solid; }
   .card.on { outline:4px solid var(--gold); outline-offset:1px; }
-  .card.gone small { opacity:.55; text-decoration:line-through; }
+  .card.gone small { opacity:.55; }
+  .card.gone small b { text-decoration:line-through; }
 
   .clock { align-self:flex-end; font-weight:700; font-variant-numeric:tabular-nums; }
   .clock:empty { display:none; }

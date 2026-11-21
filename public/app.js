@@ -277,11 +277,25 @@ function start(id, act) {
   if (act.target) { picking = id; choosing = null; render(); } else send({ type: 'action', action: id });
 }
 
+// Blank parchment on each card art, as [left, top, width, height] in % of the image (live card, then its -dead version).
+const SLOTS = {
+  backstabber: [16.4, 83.0, 81.2, 13.1], 'backstabber-dead': [16.0, 78.7, 81.6, 13.5],
+  bouncer: [12.9, 82.4, 84.4, 13.7], 'bouncer-dead': [13.7, 78.9, 82.8, 13.5],
+  changeling: [8.6, 82.8, 89.1, 13.7], 'changeling-dead': [8.6, 78.9, 89.1, 13.7],
+  goblin: [14.1, 82.4, 83.6, 14.3], 'goblin-dead': [14.1, 78.7, 83.6, 14.3],
+  paparazzo: [10.2, 79.7, 83.2, 16.4], 'paparazzo-dead': [10.2, 76.2, 82.8, 16.6],
+  showrunner: [14.8, 82.8, 82.8, 13.3], 'showrunner-dead': [14.8, 78.9, 82.8, 13.5],
+};
+
 function card(role, cls, onclick, foot) {
+  const art = role + (cls.includes('gone') ? '-dead' : '');
   const b = h('button', { className: `card ${cls}`, onclick, disabled: !onclick },
-    // Revealed cards use the defeated version of the art. The art has no name banner, so the name goes in the text.
-    h('img', { src: `art/${role}${cls.includes('gone') ? '-dead' : ''}.jpg?v=3`, alt: '', width: 256, height: 512 }),
-    h('small', {}, h('b', {}, ROLES[role].name), ' ', ROLES[role].text),
+    // Revealed cards use the defeated version of the art. The art has no name banner or printed text: the name goes in
+    // the text below and the blurb is laid over the blank parchment.
+    h('div', { className: 'art' },
+      h('img', { src: `art/${art}.jpg?v=4`, alt: '', width: 256, height: 512 }),
+      h('span', { className: 'slot', style: `left:${SLOTS[art][0]}%;top:${SLOTS[art][1]}%;width:${SLOTS[art][2]}%;height:${SLOTS[art][3]}%` }, ROLES[role].blurb)),
+    h('small', {}, h('b', {}, ROLES[role].name), ', ', ROLES[role].title, ROLES[role].quip && h('q', {}, ROLES[role].quip)),
     foot && h('b', { className: 'foot' }, foot));
   if (onclick) b.setAttribute('aria-pressed', cls === 'on');
   return b;
@@ -342,7 +356,7 @@ function renderGame() {
     h('details', {}, h('summary', {}, 'Rules'),
       h('p', {}, 'Everyone has 2 hidden cards. Lose both and you are dead. Last one alive wins.'),
       h('p', {}, 'You may claim any role, held or not. If someone calls your bluff and you lied, you lose a card. If you told the truth, they do.'),
-      rolesFor(g.variant).map(k => h('p', {}, chip(k), ' ', ROLES[k].text)),
+      rolesFor(g.variant).map(k => h('p', {}, chip(k), ` ${ROLES[k].title}. ${ROLES[k].text}`)),
       h('p', {}, 'Anyone: Grind +1, Fan Donations +2, Boss Drop (7 gold, cannot be stopped; forced at 10+ gold).')),
     g.phase === 'over' && btn('Leave room', leave, 'ghost'),
   );
