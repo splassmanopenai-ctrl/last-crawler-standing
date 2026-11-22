@@ -179,3 +179,14 @@ test('awards go to a single clear leader, never to a tie', () => {
   const got = Object.fromEntries(awards(st, [1, 3]).map(a => [a.title, a.id]));
   assert.deepStrictEqual(got, { 'Pants on Fire': 0, 'Teflon Crawler': 0, 'Piñata': 1, 'First to Die': 1 });
 });
+
+test('an Exposé is announced to everyone without revealing the card', () => {
+  const g = newGame(['A', 'B', 'C'], Math.random, true);
+  g.turn = 0;
+  ok(g, 0, { type: 'action', action: 'examine', target: 1 });
+  ok(g, 1, { type: 'pass' }); ok(g, 2, { type: 'pass' });
+  ok(g, 1, { type: 'show', card: 0 });
+  ok(g, 0, { type: 'peek', swap: true });
+  assert.deepStrictEqual(g.ev, [{ type: 'expose', by: 0, target: 1, swap: true }]);
+  assert.ok(!JSON.stringify(view(g, 2).ev).includes('role'));
+});

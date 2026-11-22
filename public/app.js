@@ -19,6 +19,13 @@ const h = (tag, props = {}, ...kids) => fill(Object.assign(document.createElemen
 const btn = (label, onclick, cls = '', sub) => h('button', { onclick, className: cls }, label, sub && h('small', {}, sub));
 
 let session = JSON.parse(localStorage.getItem(KEY) || 'null');
+let build = null; // the server version this page was loaded from
+// The server restarted with newer code than this page: reload to pick it up. Sessions are in localStorage, so it's seamless.
+function stale(b) {
+  if (build && b && b !== build) { location.reload(); return true; }
+  build = b || build;
+  return false;
+}
 let prev = null, fresh = false; // previous game view, and whether this render follows a server update
 let headlines = []; // every announcer line the latest update added, so chained events are all shown
 let v = null, es = null, picking = null, choosing = null, keep = [], toastTimer;
@@ -85,10 +92,14 @@ const send = move => { picking = choosing = null; post('move', { ...session, mov
 function connect() {
   if (es) es.close();
   es = new EventSource(`/api/events?code=${session.code}&token=${session.token}`);
-  es.onmessage = e => { prev = v && v.game; v = JSON.parse(e.data); deadlineAt = v.left == null ? null : Date.now() + v.left; fresh = true; render(); fresh = false; };
+  es.onmessage = e => {
+    const next = JSON.parse(e.data);
+    if (stale(next.build)) return;
+    prev = v && v.game; v = next; deadlineAt = v.left == null ? null : Date.now() + v.left; fresh = true; render(); fresh = false; };
   // The server says "gone" when the room no longer exists. Plain errors are not trusted for this:
   // a page reload also fires one. Dropped connections retry on their own.
-  es.addEventListener('gone', leave);
+  // Rooms only vanish when the server restarts, which may bring new code, so reload rather than just leave.
+  es.addEventListener('gone', () => { leave(); location.reload(); });
 }
 
 function leave() {
@@ -104,6 +115,7 @@ let me = JSON.parse(localStorage.getItem(ME) || 'null'), profile = null, prefill
 
 async function hello(name) {
   const r = await post('hello', { player: me, name });
+  if (stale(r.build)) return;
   if (!r.known) { me = profile = null; localStorage.removeItem(ME); return; }
   if (r.secret) { me = { id: r.id, secret: r.secret }; localStorage.setItem(ME, JSON.stringify(me)); }
   profile = r;
@@ -191,13 +203,24 @@ function renderJoin() {
   refreshHome();
 }
 
+// Invite QR code, so friends at the table can scan instead of typing. Skipped if the library is missing.
+function qrFor(link) {
+  if (!window.qrcode) return null;
+  const q = window.qrcode(0, 'M');
+  q.addData(link); q.make();
+  const img = h('img', { className: 'qr', src: q.createDataURL(6, 2), alt: `QR code for ${link}` });
+  // A localhost link only works on this computer: tell the host to open the game at its network address instead.
+  const local = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+  return [img, local && h('p', { className: 'tag' }, "This code points at this computer only. Open the game at your computer's network address so other phones can scan it.")];
+}
+
 function renderLobby() {
   const link = `${location.origin}/?room=${v.code}`;
   const share = () => navigator.share ? navigator.share({ title: 'Last Crawler Standing', url: link }).catch(() => {})
     : navigator.clipboard.writeText(link).then(() => toast('Invite link copied'), () => toast(link));
   fill(app,
     h('h1', {}, 'Last Crawler Standing'),
-    h('div', { className: 'group' }, h('h2', {}, 'Room code'), h('div', { className: 'code' }, v.code), btn('Share invite link', share)),
+    h('div', { className: 'group' }, h('h2', {}, 'Room code'), h('div', { className: 'code' }, v.code), btn('Share invite link', share), qrFor(link)),
     h('div', { className: 'group' }, h('h2', {}, `Crawlers (${v.names.length} of 6)`),
       v.names.map((n, i) => h('div', { className: 'rival' }, h('span', { className: 'name' }, n), i === 0 && h('span', { className: 'note' }, 'host'), i === v.you && h('span', { className: 'note' }, 'you'), v.host && i > 0 && kickBtn(i, n)))),
     v.host ? h('div', { className: 'group' }, h('h2', {}, 'Move timer'),
@@ -447,6 +470,37 @@ function showdown(g, e) {
   return 3000;
 }
 
+// An Exposé: everyone sees that a card was inspected and what was decided, but never the card itself.
+function exposeShow(g, e) {
+  const { animate } = window.anime, by = g.players[e.by].name, who = g.players[e.target].name;
+  const el = overlay('showdown', h('p', { className: 'burst' }, 'Exposé!'),
+    h('p', { className: 'who' }, `${by} got a good look at one of ${who}'s cards`),
+    h('img', { className: 'solo', src: CARD_BACK, alt: '' }),
+    h('p', { className: 'verdict' }, e.swap ? `${who} has to redraw it` : `${who} keeps it`));
+  animate(el, { opacity: { from: 0 }, duration: 200 });
+  animate(el.querySelector('.burst'), { scale: { from: 3 }, rotate: { from: 18 }, duration: 450, ease: 'outBack' });
+  animate(el.querySelector('.solo'), { rotate: { from: -20 }, scale: { from: .4 }, duration: 600, delay: 300, ease: 'outBack' });
+  if (e.swap) animate(el.querySelector('.solo'), { x: { from: 120 }, duration: 500, delay: 1300, ease: 'outQuad' });
+  animate(el.querySelector('.verdict'), { scale: { from: 0 }, duration: 400, delay: 1100, ease: 'outBack' });
+  later(2700, () => animate(el, { opacity: 0, duration: 350, onComplete: () => el.remove() }));
+  return 3000;
+}
+
+// The winner's moment, on every phone at once.
+function winShow(g, delay) {
+  const { animate } = window.anime;
+  const el = overlay('showdown win', h('p', { className: 'burst' }, g.players[g.winner].name),
+    h('p', { className: 'verdict' }, 'Last Crawler Standing'));
+  el.style.opacity = 0;
+  later(delay, () => {
+    el.style.opacity = '';
+    animate(el, { opacity: { from: 0 }, duration: 250 });
+    animate(el.querySelector('.burst'), { scale: { from: 0 }, rotate: { from: -30 }, duration: 600, ease: 'outBack' });
+    animate(el.querySelector('.verdict'), { y: { from: 30 }, opacity: { from: 0 }, duration: 400, delay: 350, ease: 'outQuad' });
+  });
+  later(delay + 2800, () => animate(el, { opacity: 0, duration: 400, onComplete: () => el.remove() }));
+}
+
 // Comic sound effect across the screen.
 function sfx(text, delay) {
   const { animate } = window.anime, el = overlay('sfx', text);
@@ -476,6 +530,7 @@ function polish({ g, ev, deal, yourMove, win }) {
   // A called bluff plays first; everything else waits for it.
   let wait = 0;
   for (const e of ev) if (e.type === 'challenge') wait = showdown(g, e);
+  for (const e of ev) if (e.type === 'expose') wait = exposeShow(g, e);
   for (const e of ev) {
     if (e.type === 'sfx') sfx(e.text, wait);
     if (e.type === 'gold') coins(e, wait + 150);
@@ -501,6 +556,7 @@ function polish({ g, ev, deal, yourMove, win }) {
   // The game turns to you: your options rise into place.
   if (yourMove) animate($('.panel button'), { y: { from: 12 }, opacity: { from: 0 }, duration: 260, delay: stagger(40), ease: 'outQuad' });
   // Winner: confetti, each piece on its own path.
+  if (win) winShow(g, wait);
   if (win) for (const s of $('.confetti span')) animate(s, { y: innerHeight + 80, x: rnd(-90, 90), rotate: rnd(-720, 720),
     duration: rnd(1800, 2900), delay: rnd(0, 600), ease: 'inQuad' });
 }

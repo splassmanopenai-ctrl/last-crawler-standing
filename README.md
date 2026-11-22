@@ -99,6 +99,7 @@ node --test
 - `public/game.js` — rules engine, shared by server and browser
 - `server.js` — rooms and per-player views (the server never sends you another player's hidden cards)
 - `public/app.js`, `public/index.html` — the phone UI
+- `public/vendor/qrcode.js` — [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) 2.0.4 (MIT, licence in the file header), for the lobby's invite QR code
 - `public/vendor/anime.umd.min.js` — [anime.js](https://animejs.com) 4.5.0 (MIT, see `anime-LICENSE.md`), used for the event animations; served locally so LAN games need no internet
 
 Known limits: games live in memory, so restarting the server ends them (saved players are kept). A player who closes their browser for good stalls the game unless a move timer is on or the host removes them; reopening the page on the same phone puts them back in their seat.

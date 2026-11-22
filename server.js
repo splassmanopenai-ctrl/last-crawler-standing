@@ -6,6 +6,9 @@ const PORT = process.env.PORT || 3000;
 const PASSCODE = process.env.PASSCODE || ''; // if set, required to create a room
 const PUBLIC = path.join(__dirname, 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.jpg': 'image/jpeg', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
+// Changes every time the server starts. Phones that kept the page open across a rebuild see a new value and reload,
+// so nobody keeps playing on old code.
+const BUILD = String(Date.now());
 const rooms = new Map(); // shortcut: in memory only, a restart ends all games; add storage if that ever matters
 
 // Saved players: who has played here and who they have played with. Rooms and games stay in memory.
@@ -48,7 +51,7 @@ function friendsOf(room, pid) {
 const newCode = () => Array.from({ length: 5 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ'[crypto.randomInt(24)]).join('');
 
 const roomView = (room, i) => ({
-  code: room.code, you: i, host: i === 0, names: room.players.map(p => p.name),
+  build: BUILD, code: room.code, you: i, host: i === 0, names: room.players.map(p => p.name),
   game: room.game ? view(room.game, i) : null,
   friends: room.game ? [] : friendsOf(room, room.players[i].pid),
   record: room.players[i].pid ? recordOf(room.players[i].pid) : null,
@@ -110,13 +113,13 @@ const api = {
     let id = auth(player), secret;
     name = cleanName(name);
     if (!id) {
-      if (!name) return { known: false };
+      if (!name) return { known: false, build: BUILD };
       id = crypto.randomBytes(8).toString('hex');
       secret = crypto.randomBytes(16).toString('hex');
       players[id] = { name, key: hash(secret).toString('hex'), known: {} };
       save();
     } else if (name && name !== players[id].name) { players[id].name = name; save(); }
-    return { known: true, id, secret, name: players[id].name, record: recordOf(id), invites: openInvites(id) };
+    return { build: BUILD, known: true, id, secret, name: players[id].name, record: recordOf(id), invites: openInvites(id) };
   },
 
   // Invite someone you have played with before into the room you are sitting in.

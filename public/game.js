@@ -249,6 +249,7 @@
     if (g.phase === 'peek') {
       if (pid !== c.actor || m.type !== 'peek') return 'Not your move';
       const t = g.players[c.target], card = t.cards[g.peekCard];
+      emit(g, { type: 'expose', by: pid, target: t.id, swap: !!(m.swap && !card.revealed) });
       if (m.swap && !card.revealed) {
         g.deck.push(card.role); shuffle(g.deck, g.rng); card.role = g.deck.pop();
         say(g, `${p.name} didn't like what they saw. ${t.name} redraws that card.`);
