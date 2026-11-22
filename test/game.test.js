@@ -144,3 +144,38 @@ test('a bluffed block on a Shiv, when called, costs the target both cards', () =
   assert.ok(g.players[1].cards.every(c => c.revealed)); // ...both cards: one for the lie, one for the Shiv
   assert.deepStrictEqual(g.log.slice(logAt).map(l => l.split(' ')[0] + ' ' + l.split(' ')[1]), ['P1 loses', 'Shiv lands', 'P1 loses'], 'both losses, and why, are announced');
 });
+
+test('moves emit events for the phones, and stats for the awards', () => {
+  const g = setup([['goblin', 'bouncer'], ['bouncer', 'showrunner'], ['bouncer', 'bouncer']]);
+  ok(g, 0, { type: 'action', action: 'steal', target: 1 });
+  ok(g, 1, { type: 'pass' }); ok(g, 2, { type: 'pass' });
+  assert.deepStrictEqual(g.ev, [{ type: 'sfx', text: 'Yoink!' }, { type: 'gold', from: 1, to: 0, n: 2 }]);
+  assert.strictEqual(g.stats[1].stolenFrom, 2);
+
+  // Player 1 bluffs: claims Changeling to Respec without holding one, and gets called.
+  ok(g, 1, { type: 'action', action: 'exchange' }); // claims Changeling without holding one
+  assert.strictEqual(g.stats[1].lies, 1);
+  const seq = g.seq;
+  ok(g, 2, { type: 'challenge' });
+  assert.ok(g.seq > seq);
+  assert.deepStrictEqual(g.ev[0], { type: 'challenge', by: 2, claimant: 1, role: 'changeling', held: false });
+  assert.strictEqual(g.stats[2].callsRight, 1);
+  assert.strictEqual(g.stats[1].caught, 1);
+});
+
+test('knocked-out players see every card; living players do not', () => {
+  const g = setup([['goblin', 'bouncer'], ['bouncer', 'showrunner'], ['bouncer', 'bouncer']]);
+  forfeit(g, 2);
+  assert.deepStrictEqual(g.out, [2]);
+  assert.strictEqual(view(g, 2).players[0].cards[0].role, 'goblin');
+  assert.strictEqual(view(g, 1).players[0].cards[0].role, null);
+  assert.strictEqual(view(g, 1).stats, null);
+});
+
+test('awards go to a single clear leader, never to a tie', () => {
+  const { awards } = require('../public/game.js');
+  const z = () => ({ lies: 0, caught: 0, callsRight: 0, callsWrong: 0, stolenFrom: 0 });
+  const st = [{ ...z(), lies: 3 }, { ...z(), lies: 1, caught: 1, stolenFrom: 4 }, { ...z(), callsRight: 1 }, { ...z(), callsRight: 1 }];
+  const got = Object.fromEntries(awards(st, [1, 3]).map(a => [a.title, a.id]));
+  assert.deepStrictEqual(got, { 'Pants on Fire': 0, 'Teflon Crawler': 0, 'Piñata': 1, 'First to Die': 1 });
+});

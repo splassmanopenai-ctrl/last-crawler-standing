@@ -12,20 +12,37 @@
 
   const ACTIONS = {
     income: { name: 'Grind', text: '+1 gold' },
-    aid: { name: 'Fan Donations', text: '+2 gold', blockBy: ['showrunner'] },
-    tax: { name: 'Sponsor Deal', text: '+3 gold', claim: 'showrunner' },
-    steal: { name: 'Yoink', text: 'Steal 2', claim: 'goblin', target: true, blockBy: ['goblin', 'changeling'] },
-    exchange: { name: 'Respec', text: 'Swap cards', claim: 'changeling' },
-    assassinate: { name: 'Shiv', text: 'Pay 3: kill a card', claim: 'backstabber', cost: 3, target: true, blockBy: ['bouncer'] },
-    coup: { name: 'Boss Drop', text: 'Pay 7: kill a card', cost: 7, target: true },
+    aid: { name: 'Fan Donations', text: '+2 gold', blockBy: ['showrunner'], sfx: 'Cha-ching!' },
+    tax: { name: 'Sponsor Deal', text: '+3 gold', claim: 'showrunner', sfx: 'Ka-ching!' },
+    steal: { name: 'Yoink', text: 'Steal 2', claim: 'goblin', target: true, blockBy: ['goblin', 'changeling'], sfx: 'Yoink!' },
+    exchange: { name: 'Respec', text: 'Swap cards', claim: 'changeling', sfx: 'Shuffle!' },
+    assassinate: { name: 'Shiv', text: 'Pay 3: kill a card', claim: 'backstabber', cost: 3, target: true, blockBy: ['bouncer'], sfx: 'Shiv!' },
+    coup: { name: 'Boss Drop', text: 'Pay 7: kill a card', cost: 7, target: true, sfx: 'Kaboom!' },
   };
   // Paparazzo variant: the Paparazzo replaces the Changeling (smaller Respec, plus Exposé).
   const VARIANT = {
     ...ACTIONS,
     steal: { ...ACTIONS.steal, blockBy: ['goblin', 'paparazzo'] },
-    exchange: { name: 'Respec', text: 'Swap 1 card', claim: 'paparazzo' },
-    examine: { name: 'Exposé', text: 'See a rival card', claim: 'paparazzo', target: true },
+    exchange: { name: 'Respec', text: 'Swap 1 card', claim: 'paparazzo', sfx: 'Shuffle!' },
+    examine: { name: 'Exposé', text: 'See a rival card', claim: 'paparazzo', target: true, sfx: 'Snap!' },
   };
+  // End-of-game awards from The System. Each picks one player (or nobody) from the game's stats.
+  const AWARDS = [
+    { title: 'Pants on Fire', pick: (st) => top(st, s => s.lies), say: s => `${s.lies} lie${s.lies === 1 ? '' : 's'} told on live TV.` },
+    { title: 'Teflon Crawler', pick: (st) => top(st, s => s.caught ? 0 : s.lies), say: s => `Lied ${s.lies} time${s.lies === 1 ? '' : 's'}. Never caught.` },
+    { title: 'Lie Detector', pick: (st) => top(st, s => s.callsRight), say: s => `Called ${s.callsRight} bluff${s.callsRight === 1 ? '' : 's'} correctly.` },
+    { title: 'Should Have Stayed Quiet', pick: (st) => top(st, s => s.callsWrong), say: s => `Called ${s.callsWrong} bluff${s.callsWrong === 1 ? '' : 's'} on honest crawlers.` },
+    { title: 'Piñata', pick: (st) => top(st, s => s.stolenFrom), say: s => `Had ${s.stolenFrom} gold yoinked.` },
+    { title: 'First to Die', pick: (st, out) => out.length ? out[0] : null, say: () => 'The viewers barely learned their name.' },
+  ];
+  // Index of the single highest score above zero; ties give nobody the award.
+  function top(stats, score) {
+    const scores = stats.map(score), best = Math.max(...scores);
+    return best > 0 && scores.filter(x => x === best).length === 1 ? scores.indexOf(best) : null;
+  }
+  const awards = (stats, out) => AWARDS.map(a => ({ a, id: a.pick(stats, out) })).filter(x => x.id != null)
+    .map(({ a, id }) => ({ title: a.title, id, text: a.say(stats[id]) }));
+
   const actionsFor = variant => variant ? VARIANT : ACTIONS;
   const rolesFor = variant => Object.keys(ROLES).filter(r => r !== (variant ? 'changeling' : 'paparazzo'));
   const A = g => actionsFor(g.variant);
@@ -33,6 +50,9 @@
   const alive = p => p.cards.some(c => !c.revealed);
   const holds = (p, role) => p.cards.find(c => !c.revealed && c.role === role);
   const say = (g, text) => { g.log.push(text); };
+  // What just happened, for the phones to animate. Replaced on every move; `seq` tells phones it is new.
+  const emit = (g, e) => { g.ev.push(e); };
+  const gold = (g, from, to, n) => { if (n > 0) emit(g, { type: 'gold', from, to, n }); }; // from/to null = the bank
 
   function shuffle(a, rng) {
     for (let i = a.length - 1; i > 0; i--) {
@@ -43,12 +63,13 @@
   }
 
   function newGame(names, rng = Math.random, variant = false) {
-    const g = { rng, variant, peekCard: null, log: [], phase: 'turn', cur: null, block: null, waiting: [], canChallenge: false, loser: null, offer: null, after: null, winner: null };
+    const g = { rng, variant, peekCard: null, log: [], ev: [{ type: 'deal' }], seq: 1, out: [], phase: 'turn', cur: null, block: null, waiting: [], canChallenge: false, loser: null, offer: null, after: null, winner: null };
     g.deck = shuffle(rolesFor(variant).flatMap(r => [r, r, r]), rng);
     g.players = names.map((name, id) => ({
       id, name, coins: 2,
       cards: [g.deck.pop(), g.deck.pop()].map(role => ({ role, revealed: false })),
     }));
+    g.stats = g.players.map(() => ({ lies: 0, caught: 0, callsRight: 0, callsWrong: 0, stolenFrom: 0 })); // for the end-of-game awards
     g.turn = Math.floor(rng() * names.length);
     say(g, `Welcome, Crawlers! ${g.players[g.turn].name} goes first. Try not to die boringly.`);
     return g;
@@ -58,6 +79,7 @@
     card.revealed = true;
     const what = ROLES[card.role].name;
     say(g, alive(p) ? `${p.name} loses their ${what}.` : `${p.name} loses their ${what} and is DEAD. The viewers love it.`);
+    if (!alive(p)) { g.out.push(p.id); emit(g, { type: 'out', id: p.id }); }
   }
 
   // Player loses a card: asks them to pick if they still have two, then runs `after`.
@@ -70,6 +92,9 @@
 
   function challenge(g, challengerId, claimantId, role, done) {
     const ch = g.players[challengerId], cl = g.players[claimantId], card = holds(cl, role);
+    emit(g, { type: 'challenge', by: challengerId, claimant: claimantId, role, held: !!card });
+    g.stats[challengerId][card ? 'callsWrong' : 'callsRight']++;
+    if (!card) g.stats[claimantId].caught++;
     if (card) {
       say(g, `${ch.name} calls the bluff. ${cl.name} really is the ${ROLES[role].name}. Awkward.`);
       g.deck.push(card.role); shuffle(g.deck, g.rng); card.role = g.deck.pop();
@@ -108,11 +133,12 @@
   function resolve(g) {
     const c = g.cur, p = g.players[c.actor], t = g.players[c.target];
     if (!alive(p)) return endTurn(g); // actor was removed mid-action
+    if (A(g)[c.action].sfx) emit(g, { type: 'sfx', text: A(g)[c.action].sfx });
     switch (c.action) {
-      case 'income': p.coins += 1; break;
-      case 'aid': p.coins += 2; break;
-      case 'tax': p.coins += 3; break;
-      case 'steal': { const n = Math.min(2, t.coins); t.coins -= n; p.coins += n; break; }
+      case 'income': p.coins += 1; gold(g, null, p.id, 1); break;
+      case 'aid': p.coins += 2; gold(g, null, p.id, 2); break;
+      case 'tax': p.coins += 3; gold(g, null, p.id, 3); break;
+      case 'steal': { const n = Math.min(2, t.coins); t.coins -= n; p.coins += n; gold(g, t.id, p.id, n); g.stats[t.id].stolenFrom += n; break; }
       case 'coup': case 'assassinate':
         say(g, `${A(g)[c.action].name} lands on ${t.name}.`);
         return lose(g, c.target, () => endTurn(g));
@@ -136,6 +162,7 @@
     const p = g.players[pid];
     if (!p || !m || typeof m !== 'object') return 'Bad move';
     if (!alive(p)) return 'You are dead';
+    g.ev = []; g.seq++;
     const c = g.cur, a = c && A(g)[c.action];
 
     if (g.phase === 'turn') {
@@ -146,6 +173,8 @@
       const t = act.target && Number.isInteger(m.target) ? g.players[m.target] : null;
       if (act.target && (!t || t === p || !alive(t))) return 'Pick a living rival';
       p.coins -= act.cost || 0;
+      gold(g, pid, null, act.cost || 0);
+      if (act.claim && !holds(p, act.claim)) g.stats[pid].lies++;
       g.cur = { action: m.action, actor: pid, target: t ? t.id : null };
       say(g, `${p.name} goes for ${act.name}${t ? ` on ${t.name}` : ''}${act.claim ? `, claiming ${ROLES[act.claim].name}` : ''}.`);
       if (act.claim || act.blockBy) openReact(g, !!act.claim); else resolve(g);
@@ -159,26 +188,28 @@
       if (m.type === 'pass') {
         g.waiting.splice(i, 1);
         if (!g.waiting.length) {
-          if (blocking) { say(g, `${a.name} is blocked.`); endTurn(g); } else resolve(g);
+          if (blocking) { say(g, `${a.name} is blocked.`); emit(g, { type: 'sfx', text: 'Blocked!' }); endTurn(g); } else resolve(g);
         }
         return;
       }
       if (m.type === 'challenge') {
         if (blocking) {
           return challenge(g, pid, g.block.by, g.block.role, held => {
-            if (held) { say(g, `${a.name} is blocked.`); endTurn(g); } else resolve(g);
+            if (held) { say(g, `${a.name} is blocked.`); emit(g, { type: 'sfx', text: 'Blocked!' }); endTurn(g); } else resolve(g);
           });
         }
         if (!g.canChallenge) return 'Nothing to challenge';
         return challenge(g, pid, c.actor, a.claim, held => {
           if (held) return a.blockBy ? openReact(g, false) : resolve(g);
           g.players[c.actor].coins += a.cost || 0; // caught bluffing: the action never happened
+          gold(g, null, c.actor, a.cost || 0);
           endTurn(g);
         });
       }
       if (m.type === 'block' && !blocking) {
         if (!a.blockBy || !a.blockBy.includes(m.role) || (c.target != null && c.target !== pid)) return 'You cannot block that';
         g.block = { by: pid, role: m.role };
+        if (!holds(p, m.role)) g.stats[pid].lies++;
         say(g, `${p.name} blocks, claiming ${ROLES[m.role].name}.`);
         g.phase = 'blockReact';
         g.waiting = g.players.filter(x => alive(x) && x.id !== pid).map(x => x.id);
@@ -231,15 +262,18 @@
 
   // What one player is allowed to see.
   function view(g, pid) {
+    const spectator = g.phase === 'over' || !alive(g.players[pid]);
     return {
       phase: g.phase, turn: g.turn, cur: g.cur, block: g.block, waiting: g.waiting, canChallenge: g.canChallenge,
-      loser: g.loser, winner: g.winner, log: g.log.slice(-40),
+      loser: g.loser, winner: g.winner, log: g.log.slice(-40), ev: g.ev, seq: g.seq, out: g.out,
+      stats: g.phase === 'over' ? g.stats : null,
       offer: g.phase === 'exchange' && g.cur.actor === pid ? g.offer : null,
       variant: g.variant,
       peek: g.phase === 'peek' ? { card: g.peekCard, role: g.cur.actor === pid ? g.players[g.cur.target].cards[g.peekCard].role : null } : null,
       players: g.players.map(p => ({
         id: p.id, name: p.name, coins: p.coins,
-        cards: p.cards.map(c => ({ revealed: c.revealed, role: c.revealed || p.id === pid ? c.role : null })),
+        // Knocked-out players, and everyone once the game is over, may watch with every card face up.
+        cards: p.cards.map(c => ({ revealed: c.revealed, role: c.revealed || p.id === pid || spectator ? c.role : null })),
       })),
     };
   }
@@ -274,10 +308,11 @@
     for (let n = 0; n < 10 && waitingOn(g).includes(pid); n++) autoMove(g, pid);
     if (g.phase === 'over' || !alive(p)) return;
     p.cards.forEach(c => { c.revealed = true; });
+    g.out.push(pid); emit(g, { type: 'out', id: pid });
     say(g, `${p.name} has been dragged off the show.`);
     if (g.phase === 'turn') finish(g);
     else if (g.cur.actor === pid && g.phase !== 'lose') endTurn(g); // their pending action dies with them
   }
 
-  Object.assign(exports, { ROLES, ACTIONS, actionsFor, rolesFor, newGame, act, view, waitingOn, autoMove, forfeit });
+  Object.assign(exports, { ROLES, ACTIONS, actionsFor, rolesFor, awards, newGame, act, view, waitingOn, autoMove, forfeit });
 })(typeof module !== 'undefined' ? module.exports : (window.Game = {}));

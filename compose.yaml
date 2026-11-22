@@ -10,5 +10,14 @@ services:
       - players:/app/data # saved players survive rebuilds
     restart: unless-stopped
 
+  # Optional public link: `docker compose --profile public up -d`, then find the https://….trycloudflare.com
+  # address with `docker compose logs tunnel`. Anyone with the link can open the game, so set PASSCODE.
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate --url http://game:3000
+    depends_on: [game]
+    restart: unless-stopped
+    profiles: [public]
+
 volumes:
   players:

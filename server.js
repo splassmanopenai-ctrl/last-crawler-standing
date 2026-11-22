@@ -5,7 +5,7 @@ const { newGame, act, view, waitingOn, autoMove, forfeit } = require('./public/g
 const PORT = process.env.PORT || 3000;
 const PASSCODE = process.env.PASSCODE || ''; // if set, required to create a room
 const PUBLIC = path.join(__dirname, 'public');
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.jpg': 'image/jpeg' };
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.jpg': 'image/jpeg', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
 const rooms = new Map(); // shortcut: in memory only, a restart ends all games; add storage if that ever matters
 
 // Saved players: who has played here and who they have played with. Rooms and games stay in memory.
@@ -39,7 +39,7 @@ const openInvites = id => (invites.get(id) || []).filter(v => rooms.has(v.code) 
 function friendsOf(room, pid) {
   if (!pid) return [];
   return Object.entries(players[pid].known).filter(([id]) => players[id]).sort((a, b) => b[1] - a[1]).slice(0, 30).map(([id]) => ({
-    id, name: players[id].name,
+    id, name: players[id].name, wins: recordOf(id).wins, games: recordOf(id).games,
     here: room.players.some(p => p.pid === id),
     invited: (invites.get(id) || []).some(v => v.code === room.code),
   }));
@@ -51,6 +51,7 @@ const roomView = (room, i) => ({
   code: room.code, you: i, host: i === 0, names: room.players.map(p => p.name),
   game: room.game ? view(room.game, i) : null,
   friends: room.game ? [] : friendsOf(room, room.players[i].pid),
+  record: room.players[i].pid ? recordOf(room.players[i].pid) : null,
   timer: room.timer || 0, variant: !!room.variant, left: room.deadline ? room.deadline - Date.now() : null, // ms left, so phone clocks need not agree
 });
 
@@ -75,7 +76,24 @@ function arm(room) {
   }, room.timer * 1000);
 }
 
+// Saved players keep a running record across games: played, won, bluffs called correctly, lies told.
+function record(room) {
+  const g = room.game;
+  if (!g || g.phase !== 'over' || g.recorded) return;
+  g.recorded = true;
+  room.players.forEach((seat, i) => {
+    const p = seat.pid && players[seat.pid];
+    if (!p) return;
+    const r = p.record || (p.record = { games: 0, wins: 0, callsRight: 0, lies: 0 });
+    r.games++; if (g.winner === i) r.wins++;
+    r.callsRight += g.stats[i].callsRight; r.lies += g.stats[i].lies;
+  });
+  save();
+}
+const recordOf = id => players[id].record || { games: 0, wins: 0, callsRight: 0, lies: 0 };
+
 function push(room) {
+  record(room);
   room.touched = Date.now();
   room.players.forEach((p, i) => p.res && p.res.write(`data: ${JSON.stringify(roomView(room, i))}\n\n`));
 }
@@ -98,7 +116,7 @@ const api = {
       players[id] = { name, key: hash(secret).toString('hex'), known: {} };
       save();
     } else if (name && name !== players[id].name) { players[id].name = name; save(); }
-    return { known: true, id, secret, name: players[id].name, invites: openInvites(id) };
+    return { known: true, id, secret, name: players[id].name, record: recordOf(id), invites: openInvites(id) };
   },
 
   // Invite someone you have played with before into the room you are sitting in.
@@ -211,7 +229,7 @@ http.createServer((req, res) => {
   if (!file.startsWith(PUBLIC + path.sep)) return json(res, 403, { error: 'Nope' });
   fs.readFile(file, (err, data) => {
     if (err) return json(res, 404, { error: 'Not found' });
-    res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream', 'Cache-Control': file.endsWith('.jpg') ? 'max-age=86400' : 'no-cache' });
+    res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream', 'Cache-Control': /\.(jpg|png)$/.test(file) ? 'max-age=86400' : 'no-cache' });
     res.end(data);
   });
 }).listen(PORT, () => console.log(`Last Crawler Standing on http://localhost:${PORT}${PASSCODE ? ' (host passcode required)' : ''}`));

@@ -1,4 +1,15 @@
-const { ROLES, actionsFor, rolesFor } = window.Game;
+const { ROLES, actionsFor, rolesFor, awards } = window.Game;
+const ART_V = 6; // bump when card art changes: phones cache images for a day
+
+// The back of every card: a pulp skull on show-red. One drawing, used by rivals' hidden cards and the bluff showdown.
+const CARD_BACK = 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 80">
+  <rect x="1.5" y="1.5" width="57" height="77" rx="6" fill="#7d1418" stroke="#000" stroke-width="3"/>
+  <rect x="7" y="7" width="46" height="66" rx="3" fill="none" stroke="#f5b921" stroke-width="2"/>
+  <circle cx="30" cy="36" r="13" fill="#ecdcb4" stroke="#000" stroke-width="2"/>
+  <rect x="23" y="44" width="14" height="10" rx="2" fill="#ecdcb4" stroke="#000" stroke-width="2"/>
+  <circle cx="25" cy="35" r="3.6" fill="#000"/><circle cx="35" cy="35" r="3.6" fill="#000"/>
+  <path d="M30 40l-2.4 4h4.8z" fill="#000"/><path d="M27 48v5M30 48v5M33 48v5" stroke="#000" stroke-width="1.5"/></svg>`);
+document.documentElement.style.setProperty('--card-back', `url("${CARD_BACK}")`);
 const KEY = 'lcs-session';
 const app = document.getElementById('app'), toastEl = document.getElementById('toast');
 
@@ -47,11 +58,15 @@ setInterval(tick, 500);
 
 // A role's name on its own card colour.
 const chip = (role, cls = '') => h('span', { className: `pip${cls}`, style: `background:${ROLES[role].color}` }, ROLES[role].name);
-function gold(n, cls = '') {
-  const e = h('span', { className: `gold${cls}` }, h('i', { className: 'coin' }), String(n));
+function gold(n, cls = '', from, pid) {
+  const e = h('span', { className: `gold${cls}` }, h('i', { className: 'coin' }), h('span', { className: 'num' }, String(n)));
+  if (pid != null) e.dataset.pid = pid;
+  if (from != null) e.lastChild.dataset.from = from; // polish() counts up or down from here
   e.setAttribute('aria-label', `${n} gold`);
   return e;
 }
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 function kickBtn(i, name) {
   const b = btn('✕', () => confirm(`Remove ${name} from the game?`) && send({ type: 'kick', target: i }), 'ghost mini');
@@ -102,7 +117,9 @@ async function refreshHome() {
   if (!box || !profile) return;
   if (!prefilled && !name.value) name.value = profile.name;
   prefilled = true;
-  fill(box, profile.invites.length > 0 && h('div', { className: 'panel' }, h('h2', {}, "You're invited"),
+  const r = profile.record;
+  fill(box, r && r.games > 0 && h('p', { className: 'tag' }, `Welcome back, ${profile.name}. ${plural(r.wins, 'win')} in ${plural(r.games, 'game')}.`),
+    profile.invites.length > 0 && h('div', { className: 'panel' }, h('h2', {}, "You're invited"),
     profile.invites.map(i => btn(`Join ${i.from}'s room`, () => join(i.code), 'hot', `Room ${i.code}`))));
 }
 setInterval(refreshHome, 5000);
@@ -132,6 +149,18 @@ async function join(code) {
   } catch (e) { toast(e.message); }
 }
 
+// The cast, fanned like a hand of cards. Zev joins once his banner card is ready.
+const FAN = ['backstabber', 'goblin', 'showrunner', 'bouncer', 'paparazzo'];
+let fanned = false;
+function fan() {
+  const mid = (FAN.length - 1) / 2;
+  const el = h('div', { className: 'fan' }, FAN.map((r, i) => h('img', { src: `art/${r}.jpg?v=${ART_V}`, alt: '', width: 400, height: 536,
+    style: `translate:calc(-50% + ${(i - mid) * 38}px) ${Math.abs(i - mid) * 10}px;rotate:${(i - mid) * 9}deg;z-index:${i}` })));
+  el.setAttribute('aria-hidden', 'true');
+  if (!fanned) { fanned = true; requestAnimationFrame(() => polishFan(el)); } // the join screen's one entrance
+  return el;
+}
+
 function renderJoin() {
   const room = new URLSearchParams(location.search).get('room') || '';
   const code = h('input', { id: 'code', placeholder: 'ABCDE', value: room, maxLength: 5, autocapitalize: 'characters', autocomplete: 'off' });
@@ -146,6 +175,7 @@ function renderJoin() {
   theirs.setAttribute('aria-label', 'Player code from another phone');
   prefilled = false;
   fill(app,
+    fan(),
     h('h1', {}, 'Last Crawler Standing'),
     h('p', { className: 'tag' }, 'Lie. Loot. Backstab. The whole galaxy is watching.'),
     h('div', { id: 'invites' }),
@@ -185,8 +215,10 @@ function renderLobby() {
       })),
       h('p', { className: 'tag' }, v.variant ? `${ROLES.paparazzo.name} replaces ${ROLES.changeling.name}. ${ROLES.paparazzo.text}` : `Includes ${ROLES.changeling.name}. ${ROLES.changeling.text}`))
       : h('p', { className: 'tag' }, `${v.timer ? `${v.timer}s move timer` : 'No move timer'}. ${v.variant ? ROLES.paparazzo.name : 'Classic'} card set.`),
+    v.record && v.record.games > 0 && h('p', { className: 'tag' }, `Your record: ${plural(v.record.wins, 'win')} in ${plural(v.record.games, 'game')}.`),
     v.friends.length > 0 && h('div', { className: 'group' }, h('h2', {}, 'Invite players you know'),
-      v.friends.map(f => h('div', { className: 'rival' }, h('span', { className: 'name' }, f.name),
+      v.friends.slice().sort((a, b) => b.wins - a.wins).map(f => h('div', { className: 'rival' }, h('span', { className: 'name' }, f.name),
+        h('span', { className: 'note' }, plural(f.wins, 'win')),
         f.here ? h('span', { className: 'note' }, 'here') : f.invited ? h('span', { className: 'note' }, 'invited')
           : btn('Invite', () => post('invite', { ...session, to: f.id }).catch(e => toast(e.message)), 'mini'))),
       h('p', { className: 'tag' }, 'They see the invite when they open the game.')),
@@ -206,8 +238,11 @@ function prompt(g, me) {
   const say = (text, ...kids) => [h('p', {}, text), ...kids];
   const waitingOn = () => `Waiting on ${g.waiting.map(name).join(', ')}…`;
 
-  if (g.phase === 'over') return say(`${name(g.winner)} is the Last Crawler Standing!`, v.host ? btn('Play again', () => send({ type: 'start' }), 'hot') : h('p', { className: 'tag' }, 'The host can start a rematch.'));
-  if (!isAlive(my)) return say('You are dead. Enjoy the show from the afterlife.');
+  if (g.phase === 'over') return say(`${name(g.winner)} is the Last Crawler Standing!`,
+    g.stats && h('div', { className: 'awards' }, h('h2', {}, "The System's awards"),
+      awards(g.stats, g.out).map(x => h('p', {}, h('b', {}, x.title), ` ${name(x.id)}. ${x.text}`))),
+    v.host ? btn('Play again', () => send({ type: 'start' }), 'hot') : h('p', { className: 'tag' }, 'The host can start a rematch.'));
+  if (!isAlive(my)) return say("You're out. Every card is face up for you now, so enjoy the show.");
 
   if (g.phase === 'turn') {
     if (g.turn !== me) return say(`${name(g.turn)} is deciding…`);
@@ -295,7 +330,7 @@ function card(role, cls, onclick, foot) {
     // Revealed cards use the defeated version of the art. The art has no name banner or printed text: the name goes in
     // the text below and the blurb is laid over the blank parchment.
     h('div', { className: 'art' },
-      h('img', { src: `art/${art}.jpg?v=6`, alt: '', width: artSize(art)[0], height: artSize(art)[1] }),
+      h('img', { src: `art/${art}.jpg?v=${ART_V}`, alt: '', width: artSize(art)[0], height: artSize(art)[1] }),
       h('span', { className: 'slot', style: `left:${slot[0]}%;top:${slot[1]}%;width:${slot[2]}%;height:${slot[3]}%` }, ROLES[role].blurb)),
     // Banner art already shows the name; the older art without a banner needs it written out.
     h('small', {}, NO_BANNER.has(art) ? [h('b', {}, ROLES[role].name), ', '] : null, ROLES[role].title, ROLES[role].quip && h('q', {}, ROLES[role].quip)),
@@ -321,7 +356,10 @@ function renderGame() {
     ((g.phase === 'turn' && g.turn === me) || g.waiting.includes(me) || g.loser === me || !!g.offer ||
       (g.phase === 'show' && g.cur.target === me) || (g.phase === 'peek' && g.cur.actor === me));
   const deaths = g.players.flatMap(p => p.cards).filter(c => c.revealed).length; // viewers love bloodshed
+  let motion = null;
   if (fresh) {
+    motion = { g, ev: !prev || prev.seq !== g.seq ? g.ev : [], deal: (!prev || prev.phase === 'over') && g.phase !== 'over', yourMove: myMove && (!wasMyMove || !prev || prev.phase !== g.phase),
+      win: g.phase === 'over' && (!prev || prev.phase !== 'over') };
     if (g.phase === 'over' && (!prev || prev.phase !== 'over')) tone([523, 659, 784, 1047], 0.15);
     else if (g.players.some(p => p.cards.some((c, i) => slam(p, i)))) tone([140, 90], 0.2, 'sawtooth');
     if (myMove && !wasMyMove) { tone([660, 880]); if (navigator.vibrate) navigator.vibrate(150); }
@@ -331,16 +369,18 @@ function renderGame() {
   mute.setAttribute('aria-label', muted() ? 'Turn sound on' : 'Turn sound off');
   fill(app,
     g.phase === 'over' && fresh && h('div', { className: 'confetti' }, Array.from({ length: 16 }, (_, i) =>
-      h('span', { style: `left:${(i * 37) % 100}%;animation-delay:${(i % 5) * 0.15}s;background:${Object.values(ROLES)[i % 6].color}` }))),
+      h('span', { style: `left:${(i * 37) % 100}%;background:${Object.values(ROLES)[i % 6].color}` }))),
     h('div', { className: 'bar' }, h('div', {}, h('h2', {}, `Room ${v.code}`), h('p', { className: 'tag' }, `Live to ${(2.4 + deaths * 1.7).toFixed(1)}M viewers`)), mute),
     h('div', { id: 'announcer', className: news ? 'in' : '' }, headlines.map(l => h('p', {}, l))),
     g.players.filter(p => p.id !== me).map(p => h('div', { className: `rival${g.turn === p.id && g.phase !== 'over' ? ' turn' : ''}${p.cards.every(c => c.revealed) ? ' dead' : ''}` },
       h('span', { className: 'name' }, p.name),
-      p.cards.map((c, i) => c.revealed ? chip(c.role, slam(p, i)) : Object.assign(h('span', { className: 'back' }), { title: 'Hidden card' })),
-      gold(p.coins, pop(p)),
+      p.cards.map((c, i) => c.revealed ? chip(c.role, slam(p, i)) : c.role ? chip(c.role, ' peek')
+        : Object.assign(h('span', { className: 'back' }), { title: 'Hidden card' })),
+      p.cards.every(c => c.revealed) && Object.assign(h('span', { className: 'cancelled' }, 'Cancelled'), { id: `out-${p.id}` }),
+      gold(p.coins, pop(p), old && old[p.id].coins, p.id),
       v.host && g.phase !== 'over' && p.cards.some(c => !c.revealed) && kickBtn(p.id, p.name))),
     h('div', { className: myMove || g.phase === 'over' ? 'panel' : 'status' }, h('div', { id: 'clock', className: 'clock' }), prompt(g, me)),
-    h('div', { className: 'bar' }, h('h2', {}, 'Your cards'), gold(my.coins, pop(my))),
+    h('div', { className: 'bar' }, h('h2', {}, 'Your cards'), gold(my.coins, pop(my), old && old[me].coins, me)),
     h('div', { className: 'grid' }, my.cards.map((c, i) => {
       if (c.revealed) return card(c.role, 'gone' + slam(my, i), null);
       if (g.phase === 'lose' && g.loser === me) return card(c.role, '', () => send({ type: 'lose', card: i }));
@@ -363,6 +403,106 @@ function renderGame() {
       h('p', {}, 'Anyone: Grind +1, Fan Donations +2, Boss Drop (7 gold, cannot be stopped; forced at 10+ gold).')),
     g.phase === 'over' && btn('Leave room', leave, 'ghost'),
   );
+  if (motion) polish(motion);
+}
+
+// Event animations, via anime.js. The page is already drawn in its final state and each animation plays *from* an
+// offset, so with reduced motion on, or if the library failed to load, nothing is missing.
+const calm = matchMedia('(prefers-reduced-motion: reduce)');
+if (window.anime && !calm.matches) document.documentElement.classList.add('anime');
+const rnd = (a, b) => a + Math.random() * (b - a);
+const $ = sel => [...document.querySelectorAll(sel)];
+const moving = () => window.anime && !calm.matches;
+
+function polishFan(el) {
+  if (!moving()) return;
+  window.anime.animate(el.querySelectorAll('img'), { y: { from: 220 }, opacity: { from: 0 }, duration: 750, delay: window.anime.stagger(90), ease: 'outBack' });
+}
+
+// Something that lives over the game for a moment, then removes itself.
+// Exits start on a timer, not as a delayed animation: anime.js lets a newer animation of the same property replace
+// an older one at once, so a delayed fade-out would cancel the fade-in.
+const later = (ms, fn) => setTimeout(fn, ms);
+function overlay(cls, ...kids) {
+  const el = h('div', { className: cls }, kids);
+  el.setAttribute('aria-hidden', 'true'); // the announcer already says it in words
+  document.body.append(el);
+  return el;
+}
+
+// A bluff was called: the claimed card is turned over in front of everyone.
+function showdown(g, e) {
+  const { animate } = window.anime, by = g.players[e.by].name, who = g.players[e.claimant].name;
+  const flip = h('div', { className: 'flip' }, h('img', { className: 'face front', src: `art/${e.role}.jpg?v=${ART_V}`, alt: '' }),
+    h('img', { className: 'face back', src: CARD_BACK, alt: '' }));
+  const el = overlay('showdown', h('p', { className: 'burst' }, 'Bluff called!'),
+    h('p', { className: 'who' }, `${by} doubts ${who}'s ${ROLES[e.role].name}`), flip,
+    h('p', { className: `verdict${e.held ? '' : ' lie'}` }, e.held ? `It's real. ${by} pays.` : `${who} was lying!`));
+  animate(el, { opacity: { from: 0 }, duration: 200 });
+  animate(el.querySelector('.burst'), { scale: { from: 3 }, rotate: { from: -18 }, duration: 450, ease: 'outBack' });
+  animate(flip, { rotateY: { from: 180 }, duration: 700, delay: 550, ease: 'inOutQuad', onComplete: () => { if (!e.held) flip.classList.add('liar'); } });
+  if (!e.held) animate(flip, { x: { from: -14 }, duration: 700, delay: 1300, ease: 'outElastic(1, .3)' });
+  animate(el.querySelector('.verdict'), { scale: { from: 0 }, duration: 400, delay: 1300, ease: 'outBack' });
+  later(2700, () => animate(el, { opacity: 0, duration: 350, onComplete: () => el.remove() }));
+  return 3000;
+}
+
+// Comic sound effect across the screen.
+function sfx(text, delay) {
+  const { animate } = window.anime, el = overlay('sfx', text);
+  el.style.opacity = 0; // hidden until its moment, in case a showdown plays first
+  later(delay, () => { el.style.opacity = ''; animate(el, { scale: { from: 0 }, rotate: { from: -25 }, duration: 380, ease: 'outBack' }); });
+  later(delay + 1100, () => animate(el, { opacity: 0, duration: 300, onComplete: () => el.remove() }));
+}
+
+// Gold travels: from the bank (the announcer box) or a player's purse, to a player's purse or back to the bank.
+function coins(e, delay) {
+  const { animate } = window.anime;
+  const spot = id => { const r = (id == null ? document.getElementById('announcer') : document.querySelector(`[data-pid="${id}"] .coin`))?.getBoundingClientRect();
+    return r && { x: r.left + r.width / 2, y: id == null ? r.top + 8 : r.top + r.height / 2 }; };
+  const a = spot(e.from), b = spot(e.to);
+  if (!a || !b) return;
+  for (let i = 0; i < Math.min(e.n, 5); i++) {
+    const c = overlay('flycoin');
+    c.style.left = `${a.x}px`; c.style.top = `${a.y}px`;
+    animate(c, { x: b.x - a.x, y: b.y - a.y, scale: { from: 1.5, to: .8 }, duration: 620, delay: delay + i * 90,
+      ease: 'inOutQuad', onComplete: () => c.remove() });
+  }
+}
+
+function polish({ g, ev, deal, yourMove, win }) {
+  if (!moving()) return;
+  const { animate, stagger } = window.anime;
+  // A called bluff plays first; everything else waits for it.
+  let wait = 0;
+  for (const e of ev) if (e.type === 'challenge') wait = showdown(g, e);
+  for (const e of ev) {
+    if (e.type === 'sfx') sfx(e.text, wait);
+    if (e.type === 'gold') coins(e, wait + 150);
+    const stamp = e.type === 'out' && document.getElementById(`out-${e.id}`);
+    if (stamp) animate(stamp, { scale: { from: 3 }, opacity: { from: 0 }, duration: 500, delay: wait, ease: 'outBack' });
+  }
+  // New game: your two cards are dealt onto the table.
+  if (deal) animate($('#app > .grid .card'), { y: { from: -90 }, rotate: { from: -10 }, scale: { from: .6 }, opacity: { from: 0 },
+    duration: 650, delay: stagger(150), ease: 'outBack' });
+  // The System's new lines arrive one after another.
+  const lines = $('#announcer.in p');
+  if (lines.length) animate(lines, { x: { from: -16 }, opacity: { from: 0 }, duration: 320, delay: stagger(120), ease: 'outQuad' });
+  // Gold counts up or down to its new total, and the coin flips.
+  for (const el of $('.gold.pop')) {
+    const num = el.querySelector('.num'), from = Number(num.dataset.from), to = Number(num.textContent), tally = { n: from };
+    if (Number.isFinite(from)) animate(tally, { n: to, duration: 700, ease: 'outQuad', onUpdate: () => { num.textContent = Math.round(tally.n); } });
+    animate(el.querySelector('.coin'), { rotateY: { from: 540 }, scale: { from: 1.7 }, duration: 650, ease: 'outBack' });
+  }
+  // A card that just died: yours turns over to its defeated side; a rival's tag takes the hit.
+  const flips = $('.card.slam'), hits = $('.pip.slam');
+  if (flips.length) animate(flips, { rotateY: { from: 180 }, duration: 700, ease: 'inOutQuad' });
+  if (hits.length) animate(hits, { x: { from: -12 }, rotate: { from: -6 }, scale: { from: 1.18 }, duration: 900, ease: 'outElastic(1, .35)' });
+  // The game turns to you: your options rise into place.
+  if (yourMove) animate($('.panel button'), { y: { from: 12 }, opacity: { from: 0 }, duration: 260, delay: stagger(40), ease: 'outQuad' });
+  // Winner: confetti, each piece on its own path.
+  if (win) for (const s of $('.confetti span')) animate(s, { y: innerHeight + 80, x: rnd(-90, 90), rotate: rnd(-720, 720),
+    duration: rnd(1800, 2900), delay: rnd(0, 600), ease: 'inQuad' });
 }
 
 function render() {

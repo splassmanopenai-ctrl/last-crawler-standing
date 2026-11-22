@@ -25,7 +25,14 @@ Stop it with `docker compose down`. To require a host passcode, start it with `P
 ### Letting friends in
 
 - **Same Wi-Fi:** friends open `http://<your-computer's-IP>:3000`.
-- **Anywhere:** put a tunnel in front of it, for example `cloudflared tunnel --url http://localhost:3000` or `ngrok http 3000`, and share the address it prints.
+- **Anywhere:** start the optional Cloudflare tunnel alongside the game. It needs no account and prints a random public `https://…trycloudflare.com` address that changes each time it starts:
+
+  ```bash
+  PASSCODE=something-secret docker compose --profile public up -d
+  docker compose logs tunnel | grep trycloudflare
+  ```
+
+  Stop it with `docker compose --profile public down`. Without Docker, `cloudflared tunnel --url http://localhost:3000` or `ngrok http 3000` do the same.
 - **Invite only:** only people with the room code can join, and a room closes to newcomers once the game starts. To stop strangers creating rooms on your server, set a host passcode:
 
 ```bash
@@ -62,10 +69,19 @@ On your turn pick one action. You may claim **any** role, whether you hold it or
 
 Sound and vibration cue your turn; the speaker button in the header mutes it.
 
+## On screen
+
+- **Bluff showdown:** when someone calls a bluff, the doubted card turns over in front of everyone: real, or stamped *Liar*.
+- **Comic sound effects** for each action, **coins that fly** between purses, cards that **flip** to their defeated side, and a **Cancelled** stamp on knocked-out crawlers. All of this uses anime.js and is skipped for players who turn on "reduce motion".
+- **Spectating:** once you are out, every card is face up for you. At the end of a game everyone sees all the cards.
+- **Awards:** The System hands out titles at the end of each game (biggest liar, never caught, best bluff caller, most robbed, first to die). Titles live in `AWARDS` in `public/game.js`.
+- **Add to Home Screen** opens the game full screen with its own icon. On iPhone the home-screen app keeps separate storage from Safari, so copy your player code across (see below) to stay the same player.
+
 ## Saved players and invites
 
 - The first time you enter a name, your phone becomes your player: it keeps a private key and the server remembers you. There is no password or sign-up.
 - When a game starts, everyone in it is added to each other's "players you know" list.
+- Each saved player keeps a record (games, wins, bluffs called, lies told). Your record shows on the home screen and in the lobby, and the players you know are listed by wins.
 - In a lobby, tap **Invite** next to someone you know. They see "You're invited" with a Join button on the home screen the next time they have the game open.
 - New phone? Open **Switching phones?** on the home screen and copy your player code across. Clearing the browser's site data without the code means starting as a new player.
 - Players are stored in `data/players.json` (`DATA_DIR` changes the folder); in Docker this is the `players` volume. Secrets are stored hashed.
@@ -83,5 +99,6 @@ node --test
 - `public/game.js` — rules engine, shared by server and browser
 - `server.js` — rooms and per-player views (the server never sends you another player's hidden cards)
 - `public/app.js`, `public/index.html` — the phone UI
+- `public/vendor/anime.umd.min.js` — [anime.js](https://animejs.com) 4.5.0 (MIT, see `anime-LICENSE.md`), used for the event animations; served locally so LAN games need no internet
 
 Known limits: games live in memory, so restarting the server ends them (saved players are kept). A player who closes their browser for good stalls the game unless a move timer is on or the host removes them; reopening the page on the same phone puts them back in their seat.

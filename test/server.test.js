@@ -41,6 +41,11 @@ test('players are saved, learn who they played with, and can invite them', async
     await post('join', { name: 'Bo', code: r2.code, player: B });
     assert.deepStrictEqual((await post('hello', { player: B })).invites, []);
 
+    // Finish the first game: Ann, as host, removes Bo, so Ann wins. Both records update.
+    assert.ok((await post('move', { code: r1.code, token: r1.token, move: { type: 'kick', target: 1 } })).ok);
+    const annRec = (await post('hello', { player: A })).record, boRec = (await post('hello', { player: B })).record;
+    assert.deepStrictEqual([annRec.games, annRec.wins, boRec.games, boRec.wins], [1, 1, 1, 0]);
+
     // A restart keeps the players but, as before, not the rooms.
     await sleep(400);
     server.kill(); await sleep(200);
