@@ -486,6 +486,17 @@ function exposeShow(g, e) {
   return 3000;
 }
 
+// The start of every game, on every phone at once.
+function startShow() {
+  const { animate, stagger } = window.anime;
+  const el = overlay('showdown', h('p', { className: 'verdict' }, 'Now get out there and'),
+    h('p', { className: 'burst' }, 'Kill,'), h('p', { className: 'burst' }, 'kill,'), h('p', { className: 'burst' }, 'kill!'));
+  animate(el, { opacity: { from: 0 }, duration: 200 });
+  animate(el.querySelector('.verdict'), { y: { from: 20 }, opacity: { from: 0 }, duration: 300, ease: 'outQuad' });
+  animate(el.querySelectorAll('.burst'), { scale: { from: 3 }, rotate: { from: -20 }, opacity: { from: 0 }, duration: 380, delay: stagger(260, { start: 350 }), ease: 'outBack' });
+  later(1700, () => animate(el, { opacity: 0, duration: 300, onComplete: () => el.remove() }));
+}
+
 // The winner's moment, on every phone at once.
 function winShow(g, delay) {
   const { animate } = window.anime;
@@ -537,9 +548,10 @@ function polish({ g, ev, deal, yourMove, win }) {
     const stamp = e.type === 'out' && document.getElementById(`out-${e.id}`);
     if (stamp) animate(stamp, { scale: { from: 3 }, opacity: { from: 0 }, duration: 500, delay: wait, ease: 'outBack' });
   }
-  // New game: your two cards are dealt onto the table.
+  // New game: The System sends everyone in, then your two cards are dealt onto the table.
+  if (deal) startShow();
   if (deal) animate($('#app > .grid .card'), { y: { from: -90 }, rotate: { from: -10 }, scale: { from: .6 }, opacity: { from: 0 },
-    duration: 650, delay: stagger(150), ease: 'outBack' });
+    duration: 650, delay: stagger(150, { start: 1900 }), ease: 'outBack' });
   // The System's new lines arrive one after another.
   const lines = $('#announcer.in p');
   if (lines.length) animate(lines, { x: { from: -16 }, opacity: { from: 0 }, duration: 320, delay: stagger(120), ease: 'outQuad' });

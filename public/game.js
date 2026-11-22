@@ -71,7 +71,7 @@
     }));
     g.stats = g.players.map(() => ({ lies: 0, caught: 0, callsRight: 0, callsWrong: 0, stolenFrom: 0 })); // for the end-of-game awards
     g.turn = Math.floor(rng() * names.length);
-    say(g, `Welcome, Crawlers! ${g.players[g.turn].name} goes first. Try not to die boringly.`);
+    say(g, `Welcome, Crawlers! ${g.players[g.turn].name} goes first. Now get out there and kill, kill, kill!`);
     return g;
   }
 
