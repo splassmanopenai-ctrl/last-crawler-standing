@@ -51,20 +51,20 @@ On your turn pick one action. You may claim **any** role, whether you hold it or
 |---|---|---|---|
 | Grind | +1 gold | — | — |
 | Fan Donations | +2 gold | — | Princess Donut |
-| Sponsor Deal | +3 gold | Princess Donut | — |
-| Yoink | Steal 2 gold | Mongo | Mongo, Zev |
-| Respec | Draw 2, keep the same number you had | Zev | — |
-| Shiv | Pay 3, a rival loses a card | Carl | Mordecai |
-| Boss Drop | Pay 7, a rival loses a card | — | nothing |
+| Royal Tribute | +3 gold | Princess Donut | — |
+| Chomp | Steal 2 gold | Mongo | Mongo, Zev |
+| Spin Control | Draw 2, keep the same number you had | Zev | — |
+| Special Delivery | Pay 3, a rival loses a card | Carl | Mordecai |
+| Boss Fight | Pay 7, a rival loses a card | — | nothing |
 
 - **Call the bluff:** anyone can challenge a role claim, including a block. If the claimant lied they lose a card. If they told the truth, the challenger loses one and the claimant swaps the proven card for a fresh one.
-- With 10 or more gold you must Boss Drop.
+- With 10 or more gold you must Boss Fight.
 - There are 3 copies of each role in the deck.
 
 ## Host controls
 
 - **Move timer** (lobby): Off, 30s or 60s. When it runs out, anyone being waited on makes the dullest legal move: pass, Grind, or lose their first card.
-- **Card set** (lobby): Classic, or the Odette variant. Odette replaces Zev: Respec swaps only 1 card, and Exposé lets you see one of a rival's cards (they choose which) and decide whether they must redraw it. Odette also blocks Yoink.
+- **Card set** (lobby): Classic, or the Odette variant. Odette replaces Zev: Retcon swaps only 1 card, and Exposé lets you see one of a rival's cards (they choose which) and decide whether they must redraw it. Odette also blocks Yoink.
 - **Remove a player** (✕ next to their name): in the lobby it frees the seat; mid-game it kills their cards and they sit out the rematch.
 
 Sound and vibration cue your turn; the speaker button in the header mutes it.

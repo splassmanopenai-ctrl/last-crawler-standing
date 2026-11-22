@@ -1,4 +1,4 @@
-const { ROLES, actionsFor, rolesFor, awards } = window.Game;
+const { ROLES, REACTIONS, actionsFor, rolesFor, awards } = window.Game;
 const ART_V = 6; // bump when card art changes: phones cache images for a day
 
 // The back of every card: a pulp skull on show-red. One drawing, used by rivals' hidden cards and the bluff showdown.
@@ -100,6 +100,7 @@ function connect() {
   // a page reload also fires one. Dropped connections retry on their own.
   // Rooms only vanish when the server restarts, which may bring new code, so reload rather than just leave.
   es.addEventListener('gone', () => { leave(); location.reload(); });
+  es.addEventListener('react', e => heckle(JSON.parse(e.data)));
 }
 
 function leave() {
@@ -150,12 +151,23 @@ async function usePlayerCode(text) {
   render();
 }
 
-async function join(code) {
+// Season leaderboard: everyone who has played on this server, loaded when opened.
+function hallOfFame() {
+  const list = h('div', { className: 'group' }, h('p', { className: 'tag' }, 'Loading…'));
+  const box = h('details', {}, h('summary', {}, 'Hall of fame'), list);
+  box.addEventListener('toggle', () => box.open && post('leaders', {}).then(rows => fill(list,
+    rows.length ? rows.map((r, i) => h('div', { className: 'rival' }, h('span', { className: 'note' }, `${i + 1}.`), h('span', { className: 'name' }, r.name),
+      h('span', { className: 'note' }, `${plural(r.wins, 'win')} in ${plural(r.games, 'game')}`)))
+      : h('p', { className: 'tag' }, 'Nobody has finished a game yet. Be the first.')), () => fill(list, h('p', { className: 'tag' }, 'Could not load the hall of fame.'))));
+  return box;
+}
+
+async function join(code, practice = false) {
   try {
     const name = document.getElementById('name').value, passcode = document.getElementById('pass').value;
     if (!name.trim()) return toast('Enter a name');
     await hello(name); // creates this phone's saved player on first visit, or renames it
-    session = await post('join', { name, code, passcode, player: me });
+    session = await post('join', { name, code, passcode, player: me, practice });
     localStorage.setItem(KEY, JSON.stringify(session));
     connect();
   } catch (e) { toast(e.message); }
@@ -195,7 +207,9 @@ function renderJoin() {
     h('label', { className: 'group' }, h('h2', {}, 'Join with a room code'), code),
     btn('Join room', () => code.value.trim() ? join(code.value) : toast('Enter the room code')),
     h('div', { className: 'group' }, h('h2', {}, 'Or start your own'), btn('Host a new game', () => join('')),
+      btn('Practice against bots', () => join('', true), 'ghost', 'A quick game to learn the ropes'),
       h('details', {}, h('summary', {}, 'My server needs a passcode'), pass)),
+    hallOfFame(),
     h('details', {}, h('summary', {}, 'Switching phones?'),
       me && h('p', {}, 'This phone is your player. To move it, copy this code to the other phone. Keep it private.'), me && mine,
       h('p', {}, 'Have a code from your other phone?'), theirs, btn('Use this code', () => usePlayerCode(theirs.value), 'ghost')),
@@ -214,6 +228,18 @@ function qrFor(link) {
   return [img, local && h('p', { className: 'tag' }, "This code points at this computer only. Open the game at your computer's network address so other phones can scan it.")];
 }
 
+// Host's game settings: in the lobby, and again between games. Everyone else sees a summary.
+function settings() {
+  if (!v.host) return h('p', { className: 'tag' }, `${v.timer ? `${v.timer}s move timer` : 'No move timer'}. ${v.variant ? ROLES.paparazzo.name : 'Classic'} card set.`);
+  const choice = (label, on, move) => { const b = btn(label, () => send(move), on ? '' : 'ghost'); b.setAttribute('aria-pressed', on); return b; };
+  return h('div', { className: 'group' }, h('h2', {}, 'Move timer'),
+    h('div', { className: 'grid three' }, [0, 30, 60].map(s => choice(s ? `${s}s` : 'Off', v.timer === s, { type: 'timer', seconds: s }))),
+    h('p', { className: 'tag' }, 'When time runs out, a slow crawler passes or Grinds automatically.'),
+    h('h2', {}, 'Card set'),
+    h('div', { className: 'grid' }, [false, true].map(on => choice(on ? ROLES.paparazzo.name : 'Classic', v.variant === on, { type: 'variant', on }))),
+    h('p', { className: 'tag' }, v.variant ? `${ROLES.paparazzo.name} replaces ${ROLES.changeling.name}. ${ROLES.paparazzo.text}` : `Includes ${ROLES.changeling.name}. ${ROLES.changeling.text}`));
+}
+
 function renderLobby() {
   const link = `${location.origin}/?room=${v.code}`;
   const share = () => navigator.share ? navigator.share({ title: 'Last Crawler Standing', url: link }).catch(() => {})
@@ -223,23 +249,10 @@ function renderLobby() {
     h('div', { className: 'group' }, h('h2', {}, 'Room code'), h('div', { className: 'code' }, v.code), btn('Share invite link', share), qrFor(link)),
     h('div', { className: 'group' }, h('h2', {}, `Crawlers (${v.names.length} of 6)`),
       v.names.map((n, i) => h('div', { className: 'rival' }, h('span', { className: 'name' }, n), i === 0 && h('span', { className: 'note' }, 'host'), i === v.you && h('span', { className: 'note' }, 'you'), v.host && i > 0 && kickBtn(i, n)))),
-    v.host ? h('div', { className: 'group' }, h('h2', {}, 'Move timer'),
-      h('div', { className: 'grid three' }, [0, 30, 60].map(s => {
-        const b = btn(s ? `${s}s` : 'Off', () => send({ type: 'timer', seconds: s }), v.timer === s ? '' : 'ghost');
-        b.setAttribute('aria-pressed', v.timer === s);
-        return b;
-      })),
-      h('p', { className: 'tag' }, 'When time runs out, a slow crawler passes or Grinds automatically.'),
-      h('h2', {}, 'Card set'),
-      h('div', { className: 'grid' }, [false, true].map(on => {
-        const b = btn(on ? 'Odette' : 'Classic', () => send({ type: 'variant', on }), v.variant === on ? '' : 'ghost');
-        b.setAttribute('aria-pressed', v.variant === on);
-        return b;
-      })),
-      h('p', { className: 'tag' }, v.variant ? `${ROLES.paparazzo.name} replaces ${ROLES.changeling.name}. ${ROLES.paparazzo.text}` : `Includes ${ROLES.changeling.name}. ${ROLES.changeling.text}`))
-      : h('p', { className: 'tag' }, `${v.timer ? `${v.timer}s move timer` : 'No move timer'}. ${v.variant ? ROLES.paparazzo.name : 'Classic'} card set.`),
+    settings(),
+    v.practice && h('p', { className: 'tag' }, 'Practice round: your opponents are bots, and this game does not count toward your record.'),
     v.record && v.record.games > 0 && h('p', { className: 'tag' }, `Your record: ${plural(v.record.wins, 'win')} in ${plural(v.record.games, 'game')}.`),
-    v.friends.length > 0 && h('div', { className: 'group' }, h('h2', {}, 'Invite players you know'),
+    !v.practice && v.friends.length > 0 && h('div', { className: 'group' }, h('h2', {}, 'Invite players you know'),
       v.friends.slice().sort((a, b) => b.wins - a.wins).map(f => h('div', { className: 'rival' }, h('span', { className: 'name' }, f.name),
         h('span', { className: 'note' }, plural(f.wins, 'win')),
         f.here ? h('span', { className: 'note' }, 'here') : f.invited ? h('span', { className: 'note' }, 'invited')
@@ -250,6 +263,25 @@ function renderLobby() {
     btn('Leave', leave, 'ghost'),
   );
 }
+
+// Rematch: everyone taps ready, and the next game starts when the last human does. The host can also start now.
+function rematch(g, me) {
+  const ready = v.ready || [], count = ready.filter(Boolean).length;
+  return [
+    h('p', { className: 'tag' }, `${count} of ${ready.length} ready for another round.`),
+    ready[me] ? h('p', {}, 'You are ready. Waiting for the others…') : btn('Ready for another round', () => send({ type: 'ready' }), 'hot'),
+    v.host && btn('Start now', () => send({ type: 'start' }), 'ghost', count < ready.length ? 'Without waiting for everyone' : null),
+    v.host && h('details', {}, h('summary', {}, 'Change settings for the next game'), settings()),
+  ];
+}
+
+// Practice rounds: a one-line hint for what the prompt is asking.
+const TIPS = {
+  turn: 'Tip: playing a card you hold is safe. Bluffing a card you don\'t hold pays off, unless someone calls it.',
+  react: 'Tip: call the bluff only when you\'re fairly sure they don\'t hold that card. Being wrong costs you a card.',
+  blockReact: 'Tip: a block is a claim too, so you can call its bluff.',
+  lose: 'Tip: keep the card you\'re most likely to use.',
+};
 
 function prompt(g, me) {
   const name = id => g.players[id].name, my = g.players[me];
@@ -264,8 +296,11 @@ function prompt(g, me) {
   if (g.phase === 'over') return say(`${name(g.winner)} is the Last Crawler Standing!`,
     g.stats && h('div', { className: 'awards' }, h('h2', {}, "The System's awards"),
       awards(g.stats, g.out).map(x => h('p', {}, h('b', {}, x.title), ` ${name(x.id)}. ${x.text}`))),
-    v.host ? btn('Play again', () => send({ type: 'start' }), 'hot') : h('p', { className: 'tag' }, 'The host can start a rematch.'));
-  if (!isAlive(my)) return say("You're out. Every card is face up for you now, so enjoy the show.");
+    g.reel && g.reel.length > 0 && moving() && btn('Watch the highlights', () => playReel(g), 'ghost'),
+    rematch(g, me));
+  // Knocked out: watch with every card face up, and heckle.
+  if (!isAlive(my)) return say("You're out. Every card is face up for you now, so enjoy the show. Heckle away:",
+    h('div', { className: 'grid three' }, REACTIONS.map((r, i) => btn(r, () => post('react', { ...session, i }).catch(e => toast(e.message)), 'ghost'))));
 
   if (g.phase === 'turn') {
     if (g.turn !== me) return say(`${name(g.turn)} is deciding…`);
@@ -284,7 +319,7 @@ function prompt(g, me) {
       btn('Cancel', () => { choosing = null; render(); }, 'ghost'));
     // Honest plays live on your own cards below; this panel keeps the moves anyone can make, and the lies.
     const bluffs = all.filter(([, a]) => a.claim && !holds(a.claim));
-    return say(my.coins >= 10 ? 'Your turn. 10+ gold: you must Boss Drop.' : 'Your turn. Play one of your cards below, or:',
+    return say(my.coins >= 10 ? `Your turn. 10+ gold: you must ${ACTIONS.coup.name}.` : 'Your turn. Play one of your cards below, or:',
       h('div', { className: 'grid three' }, all.filter(([, a]) => !a.claim).map(mk)),
       bluffs.length > 0 && h('p', { className: 'tag' }, "Or bluff a card you don't hold:"),
       h('div', { className: 'grid' }, bluffs.map(mk)));
@@ -297,8 +332,8 @@ function prompt(g, me) {
     const canBlock = a.blockBy && (c.target == null || c.target === me);
     const shivOnMe = c.action === 'assassinate' && c.target === me && my.cards.filter(x => !x.revealed).length === 2;
     return say(what, h('div', { className: 'grid' },
-      // A Shiv aimed at you is the one move where a single mistake costs both cards.
-      g.canChallenge && btn('Call the bluff', () => send({ type: 'challenge' }), 'hot', shivOnMe ? "If you're wrong, you lose a card and the Shiv still lands" : "If you're wrong, you lose a card"),
+      // A Special Delivery aimed at you is the one move where a single mistake costs both cards.
+      g.canChallenge && btn('Call the bluff', () => send({ type: 'challenge' }), 'hot', shivOnMe ? `If you're wrong, you lose a card and the ${a.name} still lands` : "If you're wrong, you lose a card"),
       canBlock && a.blockBy.map(r => Object.assign(btn(`Block as ${ROLES[r].name}`, () => send({ type: 'block', role: r }), '',
         shivOnMe && held(r) === 'A bluff' ? 'A bluff. If called, you lose both cards' : held(r)), { style: `background:${ROLES[r].color}` })),
       btn('Let it happen', () => send({ type: 'pass' }), 'ghost')));
@@ -325,7 +360,7 @@ function prompt(g, me) {
     const n = my.cards.filter(x => !x.revealed).length;
     const ok = btn(`Keep these (${keep.length}/${n})`, () => send({ type: 'exchange', keep }), 'hot');
     ok.disabled = keep.length !== n;
-    return say(`Respec: keep ${n}.`, h('div', { className: 'grid' }, g.offer.map((r, i) => card(r, keep.includes(i) ? 'on' : '',
+    return say(`${a.name}: keep ${n}.`, h('div', { className: 'grid' }, g.offer.map((r, i) => card(r, keep.includes(i) ? 'on' : '',
       () => { keep = keep.includes(i) ? keep.filter(k => k !== i) : [...keep, i]; render(); }))), ok);
   }
 }
@@ -402,7 +437,8 @@ function renderGame() {
       p.cards.every(c => c.revealed) && Object.assign(h('span', { className: 'cancelled' }, 'Cancelled'), { id: `out-${p.id}` }),
       gold(p.coins, pop(p), old && old[p.id].coins, p.id),
       v.host && g.phase !== 'over' && p.cards.some(c => !c.revealed) && kickBtn(p.id, p.name))),
-    h('div', { className: myMove || g.phase === 'over' ? 'panel' : 'status' }, h('div', { id: 'clock', className: 'clock' }), prompt(g, me)),
+    h('div', { className: myMove || g.phase === 'over' ? 'panel' : 'status' }, h('div', { id: 'clock', className: 'clock' }), prompt(g, me),
+      v.practice && myMove && TIPS[g.phase] && h('p', { className: 'tag' }, TIPS[g.phase])),
     h('div', { className: 'bar' }, h('h2', {}, 'Your cards'), gold(my.coins, pop(my), old && old[me].coins, me)),
     h('div', { className: 'grid' }, my.cards.map((c, i) => {
       if (c.revealed) return card(c.role, 'gone' + slam(my, i), null);
@@ -413,7 +449,7 @@ function renderGame() {
       const acts = Object.entries(actionsFor(g.variant)).filter(([, a]) => a.claim === c.role);
       const can = acts.filter(([, a]) => my.coins >= (a.cost || 0));
       if (!acts.length) return card(c.role, '', null, 'Blocks only');
-      if (my.coins >= 10) return card(c.role, '', null, 'Must Boss Drop');
+      if (my.coins >= 10) return card(c.role, '', null, `Must ${actionsFor(g.variant).coup.name}`);
       if (!can.length) return card(c.role, '', null, `${acts[0][1].name} needs ${acts[0][1].cost} gold`);
       return card(c.role, 'play', () => { if (can.length > 1) { choosing = c.role; render(); } else start(...can[0]); },
         `Play ${can.map(([, a]) => a.name).join(' or ')}`);
@@ -423,7 +459,7 @@ function renderGame() {
       h('p', {}, 'Everyone has 2 hidden cards. Lose both and you are dead. Last one alive wins.'),
       h('p', {}, 'You may claim any role, held or not. If someone calls your bluff and you lied, you lose a card. If you told the truth, they do.'),
       rolesFor(g.variant).map(k => h('p', {}, chip(k), ` ${ROLES[k].title}. ${ROLES[k].text}`)),
-      h('p', {}, 'Anyone: Grind +1, Fan Donations +2, Boss Drop (7 gold, cannot be stopped; forced at 10+ gold).')),
+      h('p', {}, `Anyone: Grind +1, Fan Donations +2, ${actionsFor(g.variant).coup.name} (7 gold, cannot be stopped; forced at 10+ gold).`)),
     g.phase === 'over' && btn('Leave room', leave, 'ghost'),
   );
   if (motion) polish(motion);
@@ -512,6 +548,77 @@ function winShow(g, delay) {
   later(delay + 2800, () => animate(el, { opacity: 0, duration: 400, onComplete: () => el.remove() }));
 }
 
+// Where a player sits on this screen (their purse), or the bank (the announcer box) for null.
+function spotOf(id) {
+  const r = (id == null ? document.getElementById('announcer') : document.querySelector(`[data-pid="${id}"] .coin`))?.getBoundingClientRect();
+  return r && { x: r.left + r.width / 2, y: id == null ? r.top + 8 : r.top + r.height / 2 };
+}
+const placed = (cls, at, ...kids) => { const el = overlay(cls, ...kids); el.style.left = `${at.x}px`; el.style.top = `${at.y}px`; return el; };
+const shake = (strength, delay) => window.anime.animate(app, { x: { from: strength }, duration: 600, delay, ease: 'outElastic(1, .3)' });
+
+// Each character's signature move, played with its comic stamp.
+function signature(e, delay) {
+  const { animate } = window.anime, from = spotOf(e.actor), to = spotOf(e.target);
+  const flash = (color, d) => { const f = overlay('flash'); f.style.background = color;
+    animate(f, { opacity: { from: .85, to: 0 }, duration: 450, delay: d, onComplete: () => f.remove() }); };
+  if (e.action === 'assassinate' && from && to) { // Carl's Special Delivery: a grenade lobbed at the target
+    const n = placed('grenade', from);
+    animate(n, { x: to.x - from.x, rotate: 540, duration: 700, delay, ease: 'linear' });
+    animate(n, { y: to.y - from.y, duration: 700, delay, ease: 'inQuad', onComplete: () => { n.remove(); flash('radial-gradient(circle, #fff6c2, #f28c28 45%, transparent 75%)', 0); shake(-14, 0); } });
+  } else if (e.action === 'coup') { // Boss Fight: the whole screen takes it
+    flash('rgba(216,38,44,.75)', delay); shake(-22, delay);
+  } else if (e.action === 'steal' && to) { // Mongo's Chomp: jaws snap shut on the victim's purse
+    const j = placed('jaws', to, h('i', { className: 'top' }), h('i', { className: 'bottom' }));
+    animate(j.querySelector('.top'), { y: { from: -34 }, duration: 260, delay, ease: 'inQuad' });
+    animate(j.querySelector('.bottom'), { y: { from: 34 }, duration: 260, delay, ease: 'inQuad' });
+    later(delay + 700, () => animate(j, { opacity: 0, duration: 250, onComplete: () => j.remove() }));
+  } else if (e.action === 'tax' && from) { // Princess Donut's Royal Tribute: a crown lands on her claimant
+    const c = placed('crown', from);
+    animate(c, { y: { from: -260 }, duration: 750, delay, ease: 'outBounce' });
+    later(delay + 1300, () => animate(c, { opacity: 0, duration: 300, onComplete: () => c.remove() }));
+  } else if (e.action === 'exchange' && from) { // Zev's Spin Control / Odette's Retcon: cards swirl in a bubble
+    const b = placed('bubble', from, h('img', { src: CARD_BACK, alt: '' }), h('img', { src: CARD_BACK, alt: '' }));
+    animate(b, { scale: { from: 0 }, duration: 350, delay, ease: 'outBack' });
+    animate(b.querySelectorAll('img'), { rotate: 720, duration: 1100, delay, ease: 'inOutQuad' });
+    later(delay + 1200, () => animate(b, { scale: 0, duration: 250, onComplete: () => b.remove() }));
+  } else if (e.action === 'examine') { // Odette's Exposé: a camera flash
+    flash('#fff', delay);
+  } else if (e.block === 'bouncer' && from) { // Mordecai's Antidote: a potion shield
+    const s = placed('shield', from);
+    animate(s, { scale: { from: 0 }, opacity: { from: 0 }, duration: 450, delay, ease: 'outBack' });
+    later(delay + 1000, () => animate(s, { opacity: 0, scale: 1.4, duration: 300, onComplete: () => s.remove() }));
+  }
+}
+
+// A heckle from a knocked-out crawler floats up every screen.
+function heckle({ name, i }) {
+  const el = overlay('heckle', h('b', {}, REACTIONS[i]), ` ${name}`);
+  el.style.left = `${15 + Math.random() * 60}%`;
+  if (!moving()) return later(1800, () => el.remove());
+  window.anime.animate(el, { y: { from: 0, to: -260 }, duration: 1800, ease: 'outQuad', onComplete: () => el.remove() });
+  later(1300, () => window.anime.animate(el, { opacity: 0, duration: 400 }));
+}
+
+// End-of-game highlight reel: the game's bluffs called, Exposés and eliminations, replayed in order, then the winner.
+function playReel(g) {
+  let t = 0;
+  for (const e of g.reel.slice(-8)) {
+    if (e.type === 'challenge') later(t, () => showdown(g, e));
+    else if (e.type === 'expose') later(t, () => exposeShow(g, e));
+    else later(t, () => outShow(g, e));
+    t += e.type === 'out' ? 1800 : 3100;
+  }
+  winShow(g, t);
+}
+
+function outShow(g, e) {
+  const { animate } = window.anime;
+  const el = overlay('showdown', h('p', { className: 'burst' }, 'Cancelled'), h('p', { className: 'who' }, `${g.players[e.id].name} is out of the show`));
+  animate(el, { opacity: { from: 0 }, duration: 200 });
+  animate(el.querySelector('.burst'), { scale: { from: 3 }, rotate: { from: -12 }, duration: 450, ease: 'outBack' });
+  later(1500, () => animate(el, { opacity: 0, duration: 250, onComplete: () => el.remove() }));
+}
+
 // Comic sound effect across the screen.
 function sfx(text, delay) {
   const { animate } = window.anime, el = overlay('sfx', text);
@@ -523,9 +630,7 @@ function sfx(text, delay) {
 // Gold travels: from the bank (the announcer box) or a player's purse, to a player's purse or back to the bank.
 function coins(e, delay) {
   const { animate } = window.anime;
-  const spot = id => { const r = (id == null ? document.getElementById('announcer') : document.querySelector(`[data-pid="${id}"] .coin`))?.getBoundingClientRect();
-    return r && { x: r.left + r.width / 2, y: id == null ? r.top + 8 : r.top + r.height / 2 }; };
-  const a = spot(e.from), b = spot(e.to);
+  const a = spotOf(e.from), b = spotOf(e.to);
   if (!a || !b) return;
   for (let i = 0; i < Math.min(e.n, 5); i++) {
     const c = overlay('flycoin');
@@ -543,7 +648,7 @@ function polish({ g, ev, deal, yourMove, win }) {
   for (const e of ev) if (e.type === 'challenge') wait = showdown(g, e);
   for (const e of ev) if (e.type === 'expose') wait = exposeShow(g, e);
   for (const e of ev) {
-    if (e.type === 'sfx') sfx(e.text, wait);
+    if (e.type === 'sfx') { sfx(e.text, wait); signature(e, wait); }
     if (e.type === 'gold') coins(e, wait + 150);
     const stamp = e.type === 'out' && document.getElementById(`out-${e.id}`);
     if (stamp) animate(stamp, { scale: { from: 3 }, opacity: { from: 0 }, duration: 500, delay: wait, ease: 'outBack' });

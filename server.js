@@ -1,9 +1,10 @@
 // Relay server: serves the phone UI, holds every room's hidden state, sends each player only their own view.
 const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto');
-const { newGame, act, view, waitingOn, autoMove, forfeit } = require('./public/game.js');
+const { newGame, act, view, waitingOn, autoMove, forfeit, actionsFor, REACTIONS, BOT_NAMES } = require('./public/game.js');
 
 const PORT = process.env.PORT || 3000;
-const PASSCODE = process.env.PASSCODE || ''; // if set, required to create a room
+const PASSCODE = process.env.PASSCODE || '';
+const BOT_DELAY = Number(process.env.BOT_DELAY) || 900; // ms a bot "thinks" before moving; tests shorten it // if set, required to create a room
 const PUBLIC = path.join(__dirname, 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.jpg': 'image/jpeg', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
 // Changes every time the server starts. Phones that kept the page open across a rebuild see a new value and reload,
@@ -51,7 +52,8 @@ function friendsOf(room, pid) {
 const newCode = () => Array.from({ length: 5 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ'[crypto.randomInt(24)]).join('');
 
 const roomView = (room, i) => ({
-  build: BUILD, code: room.code, you: i, host: i === 0, names: room.players.map(p => p.name),
+  build: BUILD, code: room.code, you: i, practice: !!room.practice,
+  ready: room.game && room.game.phase === 'over' ? room.players.map((p, j) => p.bot || room.ready.has(j)) : null, host: i === 0, names: room.players.map(p => p.name),
   game: room.game ? view(room.game, i) : null,
   friends: room.game ? [] : friendsOf(room, room.players[i].pid),
   record: room.players[i].pid ? recordOf(room.players[i].pid) : null,
@@ -82,7 +84,7 @@ function arm(room) {
 // Saved players keep a running record across games: played, won, bluffs called correctly, lies told.
 function record(room) {
   const g = room.game;
-  if (!g || g.phase !== 'over' || g.recorded) return;
+  if (!g || g.phase !== 'over' || g.recorded || room.practice) return; // practice games against bots don't count
   g.recorded = true;
   room.players.forEach((seat, i) => {
     const p = seat.pid && players[seat.pid];
@@ -99,6 +101,7 @@ function push(room) {
   record(room);
   room.touched = Date.now();
   room.players.forEach((p, i) => p.res && p.res.write(`data: ${JSON.stringify(roomView(room, i))}\n\n`));
+  nudgeBots(room);
 }
 
 function seat(code, token) {
@@ -107,7 +110,85 @@ function seat(code, token) {
   return i < 0 ? null : { room, i };
 }
 
+function startGame(room) {
+  const staying = room.players.filter(p => !p.kicked);
+  if (staying.length < 2) throw 'Need at least 2 players';
+  room.players.filter(p => p.kicked).forEach(drop);
+  room.players = staying;
+  room.ready = new Set();
+  room.game = newGame(staying.map(p => p.name), Math.random, !!room.variant);
+  const pids = [...new Set(staying.map(p => p.pid).filter(Boolean))]; // everyone here has now played together
+  for (const a of pids) for (const b of pids) if (a !== b) players[a].known[b] = Date.now();
+  if (pids.length > 1) save();
+}
+
+// Bots, for practice games: a simple, slightly reckless opponent. Never sees hidden cards except its own.
+function botMove(g, id) {
+  const p = g.players[id], A = actionsFor(g.variant), c = g.cur, a = c && A[c.action];
+  const has = r => p.cards.some(x => !x.revealed && x.role === r);
+  const chance = n => Math.random() < n;
+  const rivals = g.players.filter(x => x.id !== id && x.cards.some(y => !y.revealed));
+  const strongest = rivals.reduce((m, x) => (x.coins + 3 * x.cards.filter(y => !y.revealed).length > m.coins + 3 * m.cards.filter(y => !y.revealed).length ? x : m), rivals[0]);
+  const move = (() => {
+    if (g.phase === 'turn') {
+      if (p.coins >= 7) return { type: 'action', action: 'coup', target: strongest.id };
+      if (p.coins >= 3 && (has('backstabber') || chance(.15))) return { type: 'action', action: 'assassinate', target: strongest.id };
+      if (has('showrunner') || chance(.25)) return { type: 'action', action: 'tax' };
+      if (has('goblin') && strongest.coins >= 2) return { type: 'action', action: 'steal', target: strongest.id };
+      return { type: 'action', action: chance(.5) ? 'aid' : 'income' };
+    }
+    if (g.phase === 'react') {
+      if (a.blockBy && (c.target == null || c.target === id)) {
+        const mine = a.blockBy.find(has);
+        if (mine) return { type: 'block', role: mine };
+        if (c.target === id && chance(.25)) return { type: 'block', role: a.blockBy[0] };
+      }
+      return g.canChallenge && chance(c.target === id ? .3 : .12) ? { type: 'challenge' } : { type: 'pass' };
+    }
+    if (g.phase === 'blockReact') return chance(.15) ? { type: 'challenge' } : { type: 'pass' };
+    if (g.phase === 'lose') return { type: 'lose', card: p.cards.findIndex(x => !x.revealed) };
+    return null; // exchange, show and peek: take the dullest legal move
+  })();
+  if (!move || act(g, id, move)) autoMove(g, id);
+}
+
+// After every update, if the game is waiting on a bot, let it think for a moment and move.
+function nudgeBots(room) {
+  const g = room.game;
+  if (room.botTimer || !g || g.phase === 'over') return;
+  const id = waitingOn(g).find(i => room.players[i] && room.players[i].bot);
+  if (id == null) return;
+  room.botTimer = setTimeout(() => {
+    room.botTimer = null;
+    if (room.game !== g || !waitingOn(g).includes(id)) return nudgeBots(room);
+    botMove(g, id);
+    arm(room);
+    push(room);
+  }, BOT_DELAY * (1 + Math.random()));
+}
+
 const api = {
+  // Season leaderboard: everyone who has played on this server, by wins.
+  leaders() {
+    return Object.values(players).filter(p => p.record && p.record.games > 0)
+      .sort((a, b) => b.record.wins - a.record.wins || a.record.games - b.record.games).slice(0, 20)
+      .map(p => ({ name: p.name, wins: p.record.wins, games: p.record.games }));
+  },
+
+  // A knocked-out player heckles: a short line floats across every screen in the room.
+  react({ code, token, i }) {
+    const s = seat(code, token);
+    if (!s) throw 'You are not in this room';
+    const g = s.room.game, me = s.room.players[s.i];
+    if (!g || g.phase === 'over' || g.players[s.i].cards.some(c => !c.revealed)) throw 'Only knocked-out crawlers can heckle';
+    if (!Number.isInteger(i) || !REACTIONS[i]) throw 'Bad reaction';
+    if (Date.now() - (me.reacted || 0) < 1200) throw 'Easy there';
+    me.reacted = Date.now();
+    const msg = `event: react\ndata: ${JSON.stringify({ name: me.name, i })}\n\n`;
+    s.room.players.forEach(p => p.res && p.res.write(msg));
+    return {};
+  },
+
   // Who am I? Creates a saved player on first visit (when a name is given), and lists waiting invites.
   hello({ player, name }) {
     let id = auth(player), secret;
@@ -135,7 +216,7 @@ const api = {
     return {};
   },
 
-  join({ code, name, passcode, player }) {
+  join({ code, name, passcode, player, practice }) {
     name = cleanName(name);
     if (!name) throw 'Enter a name';
     const pid = auth(player);
@@ -143,15 +224,19 @@ const api = {
     if (code) {
       room = rooms.get(String(code).trim().toUpperCase());
       if (!room) throw 'No such room';
+      if (room.practice) throw "That's a practice room";
       if (room.game) throw 'That game has already started';
       if (room.players.length >= 6) throw 'Room is full';
     } else {
       if (PASSCODE && passcode !== PASSCODE) throw 'Wrong host passcode';
-      do room = { code: newCode(), players: [], game: null }; while (rooms.has(room.code));
+      do room = { code: newCode(), players: [], game: null, ready: new Set(), practice: practice === true }; while (rooms.has(room.code));
       rooms.set(room.code, room);
     }
     const token = crypto.randomBytes(16).toString('hex');
     room.players.push({ name, token, res: null, pid });
+    if (room.practice && room.players.length === 1) // two bots join a practice room
+      for (const bot of BOT_NAMES.slice().sort(() => Math.random() - .5).slice(0, 2))
+        room.players.push({ name: bot, token: crypto.randomBytes(16).toString('hex'), res: null, bot: true });
     if (pid) invites.set(pid, (invites.get(pid) || []).filter(v => v.code !== room.code));
     push(room);
     return { code: room.code, token };
@@ -177,15 +262,13 @@ const api = {
         else drop(room.players.splice(t, 1)[0]);
       } else {
         if (playing) throw 'Game in progress';
-        const staying = room.players.filter(p => !p.kicked);
-        if (staying.length < 2) throw 'Need at least 2 players';
-        room.players.filter(p => p.kicked).forEach(drop);
-        room.players = staying;
-        room.game = newGame(staying.map(p => p.name), Math.random, !!room.variant);
-        const pids = [...new Set(staying.map(p => p.pid).filter(Boolean))]; // everyone here has now played together
-        for (const a of pids) for (const b of pids) if (a !== b) players[a].known[b] = Date.now();
-        if (pids.length > 1) save();
+        startGame(room);
       }
+    } else if (type === 'ready') {
+      // Rematch: everyone taps ready; when the last human does, the next game starts by itself.
+      if (!room.game || room.game.phase !== 'over') throw 'The game is still on';
+      room.ready.add(i);
+      if (room.players.every((p, j) => p.bot || p.kicked || room.ready.has(j))) startGame(room);
     } else {
       if (!room.game) throw 'Game has not started';
       const err = act(room.game, i, move);

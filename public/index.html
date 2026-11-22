@@ -120,8 +120,26 @@
   .verdict.lie { color:var(--blood); }
   .sfx { position:fixed; left:50%; top:40%; translate:-50% -50%; z-index:9; pointer-events:none; white-space:nowrap;
     font:italic 800 64px/1 var(--display); text-transform:uppercase; color:var(--gold); -webkit-text-stroke:2px var(--ink); text-shadow:5px 5px 0 var(--ink); }
+  .heckle { position:fixed; bottom:90px; z-index:9; pointer-events:none; padding:6px 10px; border:2px solid var(--ink); border-radius:16px;
+    background:var(--paper); color:var(--ink); font-size:14px; box-shadow:3px 3px 0 var(--ink); }
+  .heckle b { font:italic 800 18px var(--display); text-transform:uppercase; color:var(--blood); }
   .flycoin { position:fixed; z-index:9; width:16px; height:16px; margin:-8px 0 0 -8px; border-radius:50%; background:var(--gold); border:2px solid var(--ink); pointer-events:none; }
   #app > .grid { perspective:900px; }
+  /* Signature moves. Each is centred on the point it is placed at. */
+  .flash { position:fixed; inset:0; z-index:9; pointer-events:none; }
+  .grenade, .jaws, .crown, .bubble, .shield { position:fixed; z-index:9; pointer-events:none; translate:-50% -50%; }
+  .grenade { width:22px; height:28px; border-radius:45%; background:#3f8f3a; border:2px solid var(--ink);
+    box-shadow:inset 0 -6px 0 rgba(0,0,0,.25), inset 0 6px 0 rgba(255,255,255,.2); }
+  .jaws { width:84px; height:64px; }
+  .jaws i { position:absolute; left:0; right:0; height:30px; background:var(--chalk); border:2px solid var(--ink); }
+  .jaws .top { top:0; border-radius:40px 40px 0 0; clip-path:polygon(0 0,100% 0,100% 70%,92% 100%,83% 70%,75% 100%,67% 70%,58% 100%,50% 70%,42% 100%,33% 70%,25% 100%,17% 70%,8% 100%,0 70%); }
+  .jaws .bottom { bottom:0; border-radius:0 0 40px 40px; clip-path:polygon(0 30%,8% 0,17% 30%,25% 0,33% 30%,42% 0,50% 30%,58% 0,67% 30%,75% 0,83% 30%,92% 0,100% 30%,100% 100%,0 100%); }
+  .crown { width:56px; height:40px; margin-top:-26px; background:var(--gold);
+    clip-path:polygon(0 100%,0 25%,22% 55%,35% 5%,50% 45%,65% 5%,78% 55%,100% 25%,100% 100%); filter:drop-shadow(0 3px 0 var(--ink)); }
+  .bubble { width:96px; height:96px; border-radius:50%; border:3px solid #9fd8ff; background:radial-gradient(circle at 35% 30%, rgba(255,255,255,.6), rgba(159,216,255,.25) 60%); }
+  .bubble img { position:absolute; left:50%; top:50%; width:26px; margin:-18px 0 0 -13px; }
+  .bubble img + img { margin-left:-3px; }
+  .shield { width:120px; height:120px; border-radius:50%; border:3px solid #6be38a; background:radial-gradient(circle, rgba(107,227,138,.05) 40%, rgba(107,227,138,.45)); }
 
   /* Motion: only in answer to an event. */
   #announcer { display:flex; flex-direction:column; gap:4px; }

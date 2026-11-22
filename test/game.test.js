@@ -82,7 +82,7 @@ test('failed challenge then shiv costs the target both cards', () => {
   assert.ok(g.players[1].cards.every(c => c.revealed));
 });
 
-test('10+ gold forces a Boss Drop; view hides rival cards', () => {
+test('10+ gold forces a Boss Fight; view hides rival cards', () => {
   const g = setup([['bouncer', 'bouncer'], ['goblin', 'goblin']], 10);
   assert.match(act(g, 0, { type: 'action', action: 'income' }), /must/);
   assert.strictEqual(view(g, 0).players[1].cards[0].role, null);
@@ -134,25 +134,25 @@ test('classic game rejects the variant-only action', () => {
   assert.ok(act(g, 0, { type: 'action', action: 'examine', target: 1 }));
 });
 
-test('a bluffed block on a Shiv, when called, costs the target both cards', () => {
+test('a bluffed block on a Special Delivery, when called, costs the target both cards', () => {
   const g = setup([['backstabber', 'goblin'], ['goblin', 'showrunner'], ['goblin', 'goblin']], 3);
   ok(g, 0, { type: 'action', action: 'assassinate', target: 1 });
   ok(g, 1, { type: 'block', role: 'bouncer' });
   ok(g, 0, { type: 'challenge' });
   const logAt = g.log.length;
   ok(g, 1, { type: 'lose', card: 0 }); // one tap...
-  assert.ok(g.players[1].cards.every(c => c.revealed)); // ...both cards: one for the lie, one for the Shiv
-  assert.deepStrictEqual(g.log.slice(logAt).map(l => l.split(' ')[0] + ' ' + l.split(' ')[1]), ['P1 loses', 'Shiv lands', 'P1 loses'], 'both losses, and why, are announced');
+  assert.ok(g.players[1].cards.every(c => c.revealed)); // ...both cards: one for the lie, one for the Special Delivery
+  assert.deepStrictEqual(g.log.slice(logAt, logAt + 3).map(l => l.split(' ')[0] + ' ' + l.split(' ')[1]), ['P1 loses', 'Special Delivery', 'P1 loses'], 'both losses, and why, are announced');
 });
 
 test('moves emit events for the phones, and stats for the awards', () => {
   const g = setup([['goblin', 'bouncer'], ['bouncer', 'showrunner'], ['bouncer', 'bouncer']]);
   ok(g, 0, { type: 'action', action: 'steal', target: 1 });
   ok(g, 1, { type: 'pass' }); ok(g, 2, { type: 'pass' });
-  assert.deepStrictEqual(g.ev, [{ type: 'sfx', text: 'Yoink!' }, { type: 'gold', from: 1, to: 0, n: 2 }]);
+  assert.deepStrictEqual(g.ev, [{ type: 'sfx', text: 'Chomp!', action: 'steal', actor: 0, target: 1 }, { type: 'gold', from: 1, to: 0, n: 2 }]);
   assert.strictEqual(g.stats[1].stolenFrom, 2);
 
-  // Player 1 bluffs: claims Changeling to Respec without holding one, and gets called.
+  // Player 1 bluffs: claims Zev to Spin Control without holding one, and gets called.
   ok(g, 1, { type: 'action', action: 'exchange' }); // claims Changeling without holding one
   assert.strictEqual(g.stats[1].lies, 1);
   const seq = g.seq;
@@ -189,4 +189,13 @@ test('an Exposé is announced to everyone without revealing the card', () => {
   ok(g, 0, { type: 'peek', swap: true });
   assert.deepStrictEqual(g.ev, [{ type: 'expose', by: 0, target: 1, swap: true }]);
   assert.ok(!JSON.stringify(view(g, 2).ev).includes('role'));
+});
+
+test('The System comments on caught lies and keeps a highlight reel', () => {
+  const g = setup([['goblin', 'bouncer'], ['bouncer', 'showrunner']]);
+  ok(g, 0, { type: 'action', action: 'tax' }); // a lie: no Princess Donut
+  ok(g, 1, { type: 'challenge' });
+  assert.ok(g.log.some(l => l.includes('P0') && /red-handed|liar|Busted/.test(l)));
+  assert.deepStrictEqual(g.reel.map(e => e.type), ['challenge']);
+  assert.strictEqual(view(g, 1).reel, null); // only shown once the game is over
 });
