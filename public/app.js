@@ -278,24 +278,27 @@ function start(id, act) {
 }
 
 // Blank parchment on each card art, as [left, top, width, height] in % of the image (live card, then its -dead version).
+// Most banner cards (3:4) share one parchment position; Carl's cards are taller and Zev still uses the older 1:2 art
+// with no name banner.
+const NEW_SLOT = [8, 68, 84, 18];
 const SLOTS = {
-  backstabber: [16.4, 83.0, 81.2, 13.1], 'backstabber-dead': [16.0, 78.7, 81.6, 13.5],
-  bouncer: [12.9, 82.4, 84.4, 13.7], 'bouncer-dead': [13.7, 78.9, 82.8, 13.5],
+  backstabber: [8, 79.5, 84, 10], 'backstabber-dead': [8, 68, 84, 17],
   changeling: [8.6, 82.8, 89.1, 13.7], 'changeling-dead': [8.6, 78.9, 89.1, 13.7],
-  goblin: [14.1, 82.4, 83.6, 14.3], 'goblin-dead': [14.1, 78.7, 83.6, 14.3],
-  paparazzo: [10.2, 79.7, 83.2, 16.4], 'paparazzo-dead': [10.2, 76.2, 82.8, 16.6],
-  showrunner: [14.8, 82.8, 82.8, 13.3], 'showrunner-dead': [14.8, 78.9, 82.8, 13.5],
 };
+const SIZES = { backstabber: [400, 596], 'backstabber-dead': [400, 596], changeling: [256, 512], 'changeling-dead': [256, 512] };
+const NO_BANNER = new Set(['changeling', 'changeling-dead']);
+const artSize = art => SIZES[art] || [400, 536];
 
 function card(role, cls, onclick, foot) {
-  const art = role + (cls.includes('gone') ? '-dead' : '');
+  const art = role + (cls.includes('gone') ? '-dead' : ''), slot = SLOTS[art] || NEW_SLOT;
   const b = h('button', { className: `card ${cls}`, onclick, disabled: !onclick },
     // Revealed cards use the defeated version of the art. The art has no name banner or printed text: the name goes in
     // the text below and the blurb is laid over the blank parchment.
     h('div', { className: 'art' },
-      h('img', { src: `art/${art}.jpg?v=4`, alt: '', width: 256, height: 512 }),
-      h('span', { className: 'slot', style: `left:${SLOTS[art][0]}%;top:${SLOTS[art][1]}%;width:${SLOTS[art][2]}%;height:${SLOTS[art][3]}%` }, ROLES[role].blurb)),
-    h('small', {}, h('b', {}, ROLES[role].name), ', ', ROLES[role].title, ROLES[role].quip && h('q', {}, ROLES[role].quip)),
+      h('img', { src: `art/${art}.jpg?v=6`, alt: '', width: artSize(art)[0], height: artSize(art)[1] }),
+      h('span', { className: 'slot', style: `left:${slot[0]}%;top:${slot[1]}%;width:${slot[2]}%;height:${slot[3]}%` }, ROLES[role].blurb)),
+    // Banner art already shows the name; the older art without a banner needs it written out.
+    h('small', {}, NO_BANNER.has(art) ? [h('b', {}, ROLES[role].name), ', '] : null, ROLES[role].title, ROLES[role].quip && h('q', {}, ROLES[role].quip)),
     foot && h('b', { className: 'foot' }, foot));
   if (onclick) b.setAttribute('aria-pressed', cls === 'on');
   return b;
