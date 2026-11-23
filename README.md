@@ -77,6 +77,12 @@ Sound and vibration cue your turn; the speaker button in the header mutes it.
 - **Awards:** The System hands out titles at the end of each game (biggest liar, never caught, best bluff caller, most robbed, first to die). Titles live in `AWARDS` in `public/game.js`.
 - **Add to Home Screen** opens the game full screen with its own icon. On iPhone the home-screen app keeps separate storage from Safari, so copy your player code across (see below) to stay the same player.
 
+## Keeping games running
+
+- **Restarts:** rooms and games in progress are saved to `data/rooms.json` (the `players` volume in Docker), so restarting or rebuilding the server doesn't end a game. Phones reconnect and reload onto the new code by themselves.
+- **A dead phone:** the host opens **Host tools: move a player to a new phone** on the game screen and makes a seat link (with a QR code) for that player. Opening it on another phone moves the seat there and signs the old phone out. Saved players can also just rejoin the room with the same room code from a phone holding their player code.
+- **Public links:** each device is limited to 120 requests a minute and 12 new rooms every 10 minutes, and the server holds at most 300 rooms, so a stranger with your tunnel link can't clog it. Set `PASSCODE` as well.
+
 ## Saved players and invites
 
 - The first time you enter a name, your phone becomes your player: it keeps a private key and the server remembers you. There is no password or sign-up.
@@ -88,7 +94,7 @@ Sound and vibration cue your turn; the speaker button in the header mutes it.
 
 ## Changing the theme
 
-Every role name, action name and announcer line lives at the top of [public/game.js](public/game.js). Card art (bump the `?v=` number in `public/app.js` when you replace it, since phones cache images for a day) is one image per role in `public/art/`, named after the role's key in that file (256×512 JPEG, the whole card), plus a `-dead` version shown once the card is lost. The art has no printed text: each card's parchment is blank, and its `blurb` from `game.js` is laid over it at the position listed in `SLOTS` in `public/app.js`.
+Every role name, action name and announcer line lives at the top of [public/game.js](public/game.js). Card art (bump `ART_V` in `public/js/ui.js` when you replace it, since phones cache images for a day) is one image per role in `public/art/`, named after the role's key in that file (256×512 JPEG, the whole card), plus a `-dead` version shown once the card is lost. The art has no printed text: each card's parchment is blank, and its `blurb` from `game.js` is laid over it at the position listed in `SLOTS` in `public/js/ui.js`.
 
 ## Development
 
@@ -98,8 +104,8 @@ node --test
 
 - `public/game.js` — rules engine, shared by server and browser
 - `server.js` — rooms and per-player views (the server never sends you another player's hidden cards)
-- `public/app.js`, `public/index.html` — the phone UI
+- `public/index.html` and `public/js/` — the phone UI: `ui.js` (building blocks), `net.js` (server and session), `screens.js` (join, lobby, game), `fx.js` (sound and animation), `app.js` (start-up). They are plain scripts loaded in that order, sharing their top-level names.
 - `public/vendor/qrcode.js` — [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) 2.0.4 (MIT, licence in the file header), for the lobby's invite QR code
 - `public/vendor/anime.umd.min.js` — [anime.js](https://animejs.com) 4.5.0 (MIT, see `anime-LICENSE.md`), used for the event animations; served locally so LAN games need no internet
 
-Known limits: games live in memory, so restarting the server ends them (saved players are kept). A player who closes their browser for good stalls the game unless a move timer is on or the host removes them; reopening the page on the same phone puts them back in their seat.
+Known limits: rate limits are per device address and reset when the server restarts. A player who closes their browser for good stalls the game unless a move timer is on or the host removes them; reopening the page on the same phone puts them back in their seat.

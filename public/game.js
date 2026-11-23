@@ -128,15 +128,35 @@
     }
   }
 
-  // Player loses a card: asks them to pick if they still have two, then runs `after`.
-  function lose(g, pid, after) {
+  // Player loses a card: asks them to pick if they still have two, then carries on with `next`.
+  // `next` is a name, not a function, so a paused game is plain data that can be saved and restored.
+  function lose(g, pid, next) {
     const p = g.players[pid], left = p.cards.filter(c => !c.revealed);
-    if (left.length === 2) { g.phase = 'lose'; g.loser = pid; g.after = after; return; }
+    if (left.length === 2) { g.phase = 'lose'; g.loser = pid; g.after = next; return; }
     if (left.length) reveal(g, p, left[0]);
-    after();
+    proceed(g, next);
   }
 
-  function challenge(g, challengerId, claimantId, role, done) {
+  function blocked(g) {
+    say(g, `${A(g)[g.cur.action].name} is blocked.`);
+    emit(g, { type: 'sfx', text: ROLES[g.block.role].blockSfx || 'Blocked!', block: g.block.role, actor: g.block.by });
+  }
+
+  // What happens after a card is lost. 'block:…' and 'action:…' follow a called bluff on a block or an action.
+  function proceed(g, next) {
+    const c = g.cur, a = c && A(g)[c.action];
+    if (next === 'block:held') { blocked(g); return endTurn(g); }
+    if (next === 'block:lie') return resolve(g);
+    if (next === 'action:held') return a.blockBy ? openReact(g, false) : resolve(g);
+    if (next === 'action:lie') { // caught bluffing: the action never happened
+      g.players[c.actor].coins += a.cost || 0;
+      gold(g, null, c.actor, a.cost || 0);
+    }
+    endTurn(g);
+  }
+
+  // `on` is 'block' or 'action': which claim was called.
+  function challenge(g, challengerId, claimantId, role, on) {
     const ch = g.players[challengerId], cl = g.players[claimantId], card = holds(cl, role);
     emit(g, { type: 'challenge', by: challengerId, claimant: claimantId, role, held: !!card });
     g.stats[challengerId][card ? 'callsWrong' : 'callsRight']++;
@@ -145,11 +165,11 @@
       say(g, `${ch.name} calls the bluff. ${cl.name} really is the ${ROLES[role].name}. Awkward.`);
       comment(g, 'wrongCall', challengerId);
       g.deck.push(card.role); shuffle(g.deck, g.rng); card.role = g.deck.pop();
-      lose(g, challengerId, () => done(true));
+      lose(g, challengerId, `${on}:held`);
     } else {
       say(g, `${ch.name} calls the bluff. ${cl.name} was lying!`);
       comment(g, 'caught', claimantId);
-      lose(g, claimantId, () => done(false));
+      lose(g, claimantId, `${on}:lie`);
     }
   }
 
@@ -190,7 +210,7 @@
       case 'steal': { const n = Math.min(2, t.coins); t.coins -= n; p.coins += n; gold(g, t.id, p.id, n); g.stats[t.id].stolenFrom += n; break; }
       case 'coup': case 'assassinate':
         say(g, `${A(g)[c.action].name} lands on ${t.name}.`);
-        return lose(g, c.target, () => endTurn(g));
+        return lose(g, c.target, 'end');
       case 'exchange':
         g.offer = [...p.cards.filter(x => !x.revealed).map(x => x.role), g.deck.pop()];
         if (!g.variant) g.offer.push(g.deck.pop());
@@ -237,23 +257,16 @@
       if (m.type === 'pass') {
         g.waiting.splice(i, 1);
         if (!g.waiting.length) {
-          if (blocking) { say(g, `${a.name} is blocked.`); emit(g, { type: 'sfx', text: ROLES[g.block.role].blockSfx || 'Blocked!', block: g.block.role, actor: g.block.by }); endTurn(g); } else resolve(g);
+          if (blocking) { blocked(g); endTurn(g); } else resolve(g);
         }
         return;
       }
       if (m.type === 'challenge') {
         if (blocking) {
-          return challenge(g, pid, g.block.by, g.block.role, held => {
-            if (held) { say(g, `${a.name} is blocked.`); emit(g, { type: 'sfx', text: ROLES[g.block.role].blockSfx || 'Blocked!', block: g.block.role, actor: g.block.by }); endTurn(g); } else resolve(g);
-          });
+          return challenge(g, pid, g.block.by, g.block.role, 'block');
         }
         if (!g.canChallenge) return 'Nothing to challenge';
-        return challenge(g, pid, c.actor, a.claim, held => {
-          if (held) return a.blockBy ? openReact(g, false) : resolve(g);
-          g.players[c.actor].coins += a.cost || 0; // caught bluffing: the action never happened
-          gold(g, null, c.actor, a.cost || 0);
-          endTurn(g);
-        });
+        return challenge(g, pid, c.actor, a.claim, 'action');
       }
       if (m.type === 'block' && !blocking) {
         if (!a.blockBy || !a.blockBy.includes(m.role) || (c.target != null && c.target !== pid)) return 'You cannot block that';
@@ -271,8 +284,8 @@
       const card = Number.isInteger(m.card) ? p.cards[m.card] : null;
       if (pid !== g.loser || m.type !== 'lose' || !card || card.revealed) return 'Not your move';
       reveal(g, p, card);
-      const after = g.after; g.after = g.loser = null;
-      after();
+      const next = g.after; g.after = g.loser = null;
+      proceed(g, next);
       return;
     }
 
@@ -364,5 +377,8 @@
     else if (g.cur.actor === pid && g.phase !== 'lose') endTurn(g); // their pending action dies with them
   }
 
-  Object.assign(exports, { ROLES, ACTIONS, REACTIONS, BOT_NAMES, actionsFor, rolesFor, awards, newGame, act, view, waitingOn, autoMove, forfeit });
+  // A game read back from disk: everything is plain data except the shuffler, which is reattached here.
+  const revive = (g, rng = Math.random) => Object.assign(g, { rng });
+
+  Object.assign(exports, { revive, ROLES, ACTIONS, REACTIONS, BOT_NAMES, actionsFor, rolesFor, awards, newGame, act, view, waitingOn, autoMove, forfeit });
 })(typeof module !== 'undefined' ? module.exports : (window.Game = {}));

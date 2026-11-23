@@ -199,3 +199,19 @@ test('The System comments on caught lies and keeps a highlight reel', () => {
   assert.deepStrictEqual(g.reel.map(e => e.type), ['challenge']);
   assert.strictEqual(view(g, 1).reel, null); // only shown once the game is over
 });
+
+test('a game saved to JSON at any point can be restored and played to the end', () => {
+  const { revive, waitingOn, autoMove } = require('../public/game.js');
+  for (let run = 0; run < 200; run++) {
+    let g = newGame(['A', 'B', 'C', 'D'].slice(0, 2 + (run % 3)), Math.random, run % 2 === 1);
+    for (let i = 0; g.phase !== 'over'; i++) {
+      assert.ok(i < 3000, 'game did not finish');
+      if (Math.random() < .2) g = revive(JSON.parse(JSON.stringify(g)));
+      // Mix real choices with the dull fallback so challenges, blocks and card losses all happen.
+      const id = waitingOn(g)[0], pick = a => a[Math.floor(Math.random() * a.length)];
+      const err = act(g, id, pick([{ type: 'challenge' }, { type: 'block', role: pick(Object.keys(ROLES)) },
+        { type: 'action', action: pick(['tax', 'steal', 'assassinate', 'income']), target: pick(g.players).id }]));
+      if (err) autoMove(g, id);
+    }
+  }
+});

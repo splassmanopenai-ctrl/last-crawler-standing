@@ -1,6 +1,6 @@
 // Relay server: serves the phone UI, holds every room's hidden state, sends each player only their own view.
 const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto');
-const { newGame, act, view, waitingOn, autoMove, forfeit, actionsFor, REACTIONS, BOT_NAMES } = require('./public/game.js');
+const { newGame, act, view, waitingOn, autoMove, forfeit, actionsFor, revive, REACTIONS, BOT_NAMES } = require('./public/game.js');
 
 const PORT = process.env.PORT || 3000;
 const PASSCODE = process.env.PASSCODE || '';
@@ -10,7 +10,7 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; ch
 // Changes every time the server starts. Phones that kept the page open across a rebuild see a new value and reload,
 // so nobody keeps playing on old code.
 const BUILD = String(Date.now());
-const rooms = new Map(); // shortcut: in memory only, a restart ends all games; add storage if that ever matters
+const rooms = new Map(); // also saved to rooms.json on every change, so a restart doesn't end games
 
 // Saved players: who has played here and who they have played with. Rooms and games stay in memory.
 // shortcut: one JSON file rewritten on change, fine for a friends-sized group; move to SQLite if it grows.
@@ -52,7 +52,7 @@ function friendsOf(room, pid) {
 const newCode = () => Array.from({ length: 5 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ'[crypto.randomInt(24)]).join('');
 
 const roomView = (room, i) => ({
-  build: BUILD, code: room.code, you: i, practice: !!room.practice,
+  build: BUILD, code: room.code, you: i, practice: !!room.practice, bots: room.players.map(p => !!p.bot),
   ready: room.game && room.game.phase === 'over' ? room.players.map((p, j) => p.bot || room.ready.has(j)) : null, host: i === 0, names: room.players.map(p => p.name),
   game: room.game ? view(room.game, i) : null,
   friends: room.game ? [] : friendsOf(room, room.players[i].pid),
@@ -97,17 +97,51 @@ function record(room) {
 }
 const recordOf = id => players[id].record || { games: 0, wins: 0, callsRight: 0, lies: 0 };
 
+// Rooms on disk: everything except live connections and timers. Written in one go via a temp file, so a crash
+// mid-write never leaves half a file. shortcut: rewrites every room on each change; fine for a friends-sized server.
+const ROOMS = path.join(path.dirname(DATA), 'rooms.json');
+let savingRooms;
+function saveRooms() {
+  clearTimeout(savingRooms);
+  savingRooms = setTimeout(() => {
+    const data = [...rooms.values()].map(r => ({
+      code: r.code, practice: r.practice, timer: r.timer, variant: r.variant, touched: r.touched, ready: [...r.ready],
+      players: r.players.map(({ name, token, pid, bot, kicked }) => ({ name, token, pid, bot, kicked })),
+      game: r.game, // plain data; the shuffler function is left out by JSON and reattached on load
+    }));
+    try {
+      fs.mkdirSync(path.dirname(ROOMS), { recursive: true });
+      fs.writeFileSync(ROOMS + '.tmp', JSON.stringify(data));
+      fs.renameSync(ROOMS + '.tmp', ROOMS);
+    } catch (e) { console.error('Could not save rooms:', e.message); }
+  }, 300);
+}
+try {
+  for (const r of JSON.parse(fs.readFileSync(ROOMS, 'utf8'))) {
+    rooms.set(r.code, { ...r, ready: new Set(r.ready), players: r.players.map(p => ({ ...p, res: null })), game: r.game && revive(r.game) });
+  }
+} catch { /* first run, or no rooms */ }
+
 function push(room) {
   record(room);
   room.touched = Date.now();
   room.players.forEach((p, i) => p.res && p.res.write(`data: ${JSON.stringify(roomView(room, i))}\n\n`));
   nudgeBots(room);
+  saveRooms();
 }
 
 function seat(code, token) {
   const room = rooms.get(String(code).toUpperCase());
   const i = room ? room.players.findIndex(p => p.token === token) : -1;
   return i < 0 ? null : { room, i };
+}
+
+// New seat token: the old phone is signed out of the seat (and goes back to the join screen).
+function reissue(room, p) {
+  p.token = crypto.randomBytes(16).toString('hex');
+  drop(p); p.res = null;
+  saveRooms();
+  return p.token;
 }
 
 function startGame(room) {
@@ -175,6 +209,16 @@ const api = {
       .map(p => ({ name: p.name, wins: p.record.wins, games: p.record.games }));
   },
 
+  // Host tool: a one-time link that moves a player's seat to another phone (theirs died, or they switched).
+  reseat({ code, token, target }) {
+    const s = seat(code, token);
+    if (!s) throw 'You are not in this room';
+    if (s.i !== 0) throw 'Only the host can do that';
+    const p = Number.isInteger(target) && s.room.players[target];
+    if (!p || p.bot || p.kicked) throw 'Bad player';
+    return { token: reissue(s.room, p) };
+  },
+
   // A knocked-out player heckles: a short line floats across every screen in the room.
   react({ code, token, i }) {
     const s = seat(code, token);
@@ -224,11 +268,16 @@ const api = {
     if (code) {
       room = rooms.get(String(code).trim().toUpperCase());
       if (!room) throw 'No such room';
+      // A saved player rejoining a room they are already in takes their seat back, e.g. from a new phone.
+      const mine = pid && room.players.find(p => p.pid === pid && !p.kicked);
+      if (mine) return { code: room.code, token: reissue(room, mine) };
       if (room.practice) throw "That's a practice room";
       if (room.game) throw 'That game has already started';
       if (room.players.length >= 6) throw 'Room is full';
     } else {
       if (PASSCODE && passcode !== PASSCODE) throw 'Wrong host passcode';
+      if (rooms.size >= MAX_ROOMS) throw 'The server is full right now. Try again in a little while.';
+      if (tooMany('room', this.ip, 12, 10 * 60e3)) throw 'Too many new rooms from this device. Try again in a few minutes.';
       do room = { code: newCode(), players: [], game: null, ready: new Set(), practice: practice === true }; while (rooms.has(room.code));
       rooms.set(room.code, room);
     }
@@ -280,6 +329,21 @@ const api = {
   },
 };
 
+// Rate limits, so one noisy visitor to a public link can't clog the server.
+// shortcut: in-memory counters per address; stops a careless or bored stranger, not a determined attack.
+const MAX_ROOMS = 300;
+const hits = new Map(); // "kind address" -> { n, until }
+function tooMany(kind, ip, max, ms) {
+  const k = `${kind} ${ip}`, now = Date.now();
+  const h = hits.get(k);
+  if (!h || now > h.until) { hits.set(k, { n: 1, until: now + ms }); return false; }
+  return ++h.n > max;
+}
+setInterval(() => { const now = Date.now(); for (const [k, h] of hits) if (now > h.until) hits.delete(k); }, 60e3).unref();
+// Behind the Cloudflare tunnel every request arrives from the tunnel, so use the visitor address it passes along.
+// That header could be faked by a direct visitor, which only lets them dodge their own limit.
+const addressOf = req => String(req.headers['cf-connecting-ip'] || req.socket.remoteAddress);
+
 function json(res, status, body) {
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(body));
@@ -290,10 +354,12 @@ http.createServer((req, res) => {
   const name = url.pathname.startsWith('/api/') ? url.pathname.slice(5) : '';
 
   if (req.method === 'POST' && Object.hasOwn(api, name)) {
+    const ip = addressOf(req);
+    if (tooMany('api', ip, 120, 60e3)) return json(res, 429, { error: 'Slow down a little and try again.' });
     let body = '';
     req.on('data', d => { body += d; if (body.length > 4096) req.destroy(); });
     req.on('end', () => {
-      try { json(res, 200, api[name](JSON.parse(body))); }
+      try { json(res, 200, api[name].call({ ip }, JSON.parse(body))); }
       catch (e) { json(res, 400, { error: typeof e === 'string' ? e : 'Bad request' }); }
     });
     return;
@@ -318,11 +384,14 @@ http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream', 'Cache-Control': /\.(jpg|png)$/.test(file) ? 'max-age=86400' : 'no-cache' });
     res.end(data);
   });
-}).listen(PORT, () => console.log(`Last Crawler Standing on http://localhost:${PORT}${PASSCODE ? ' (host passcode required)' : ''}`));
+}).listen(PORT, () => {
+  for (const room of rooms.values()) { arm(room); nudgeBots(room); } // restored games: restart clocks and bots
+  console.log(`Last Crawler Standing on http://localhost:${PORT}${PASSCODE ? ' (host passcode required)' : ''}${rooms.size ? `, ${rooms.size} room(s) restored` : ''}`);
+});
 
 setInterval(() => {
   for (const room of rooms.values()) {
     room.players.forEach(p => p.res && p.res.write(': ping\n\n')); // keeps tunnels and proxies from closing idle streams
-    if (Date.now() - room.touched > 6 * 3600e3) { clearTimeout(room.t); room.players.forEach(drop); rooms.delete(room.code); }
+    if (Date.now() - room.touched > 6 * 3600e3) { clearTimeout(room.t); room.players.forEach(drop); rooms.delete(room.code); saveRooms(); }
   }
 }, 25e3).unref();

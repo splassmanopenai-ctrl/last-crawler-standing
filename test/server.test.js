@@ -105,3 +105,59 @@ test('a practice game against two bots plays to the end, and does not count towa
     assert.deepStrictEqual((await post('hello', { player: { id: me.id, secret: me.secret } })).record.games, 0);
   } finally { server.kill(); }
 });
+
+// The first update a seat receives on connecting.
+async function firstView(code, token) {
+  const res = await fetch(`http://localhost:${PORT}/api/events?code=${code}&token=${token}`);
+  const reader = res.body.getReader(), dec = new TextDecoder();
+  let buf = '';
+  while (!buf.includes('\n\n')) buf += dec.decode((await reader.read()).value);
+  reader.cancel();
+  return buf.startsWith('data: ') ? JSON.parse(buf.slice(6, buf.indexOf('\n\n'))) : null;
+}
+
+test('a game in progress survives a server restart', async () => {
+  let server = await boot();
+  try {
+    const a = await post('join', { name: 'Ann' }), b = await post('join', { name: 'Bo', code: a.code });
+    assert.ok((await post('move', { code: a.code, token: a.token, move: { type: 'start' } })).ok);
+    const before = await firstView(a.code, a.token);
+    await sleep(500); // rooms are written to disk shortly after each change
+    server.kill(); await sleep(200);
+    server = await boot();
+    const after = await firstView(a.code, a.token);
+    assert.deepStrictEqual(after.game.log, before.game.log);
+    assert.strictEqual(after.game.turn, before.game.turn);
+    assert.notStrictEqual(after.build, before.build); // phones see a new build and reload onto it
+    const mover = after.game.turn === 0 ? a : b;
+    assert.ok((await post('move', { code: a.code, token: mover.token, move: { type: 'action', action: 'income' } })).ok);
+  } finally { server.kill(); }
+});
+
+test('a seat can move to a new phone: by host link, or by a saved player rejoining', async () => {
+  const server = await boot();
+  try {
+    const bo = await post('hello', { name: 'Bo' }), B = { id: bo.id, secret: bo.secret };
+    const a = await post('join', { name: 'Ann' }), b = await post('join', { name: 'Bo', code: a.code, player: B });
+    assert.ok((await post('move', { code: a.code, token: a.token, move: { type: 'start' } })).ok);
+    // Bo's phone dies; the host makes a seat link.
+    assert.strictEqual((await post('reseat', { code: a.code, token: b.token, target: 1 })).ok, false); // only the host
+    const link = await post('reseat', { code: a.code, token: a.token, target: 1 });
+    assert.strictEqual(await firstView(a.code, b.token), null); // old phone is signed out
+    assert.strictEqual((await firstView(a.code, link.token)).you, 1);
+    // Bo, a saved player, can also just rejoin the room with their player code.
+    const again = await post('join', { name: 'Bo', code: a.code, player: B });
+    assert.strictEqual((await firstView(a.code, again.token)).you, 1);
+  } finally { server.kill(); }
+});
+
+test('one device cannot flood the server with rooms', async () => {
+  const server = await boot();
+  try {
+    const made = [];
+    for (let i = 0; i < 13; i++) made.push((await post('join', { name: `R${i}` })).ok);
+    assert.deepStrictEqual(made.filter(Boolean).length, 12);
+    const r = await post('join', { name: 'One more' });
+    assert.match(r.error, /Too many new rooms/);
+  } finally { server.kill(); }
+});
