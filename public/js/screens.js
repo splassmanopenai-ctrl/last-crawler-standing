@@ -16,13 +16,13 @@ function hallOfFame() {
   return box;
 }
 
-// The cast, fanned like a hand of cards. Zev joins once his banner card is ready.
-const FAN = ['backstabber', 'goblin', 'showrunner', 'bouncer', 'paparazzo'];
+// The cast, fanned like a hand of cards.
+const FAN = ['backstabber', 'goblin', 'showrunner', 'changeling', 'bouncer', 'paparazzo'];
 let fanned = false;
 function fan() {
   const mid = (FAN.length - 1) / 2;
   const el = h('div', { className: 'fan' }, FAN.map((r, i) => h('img', { src: `art/${r}.jpg?v=${ART_V}`, alt: '', width: 400, height: 536,
-    style: `translate:calc(-50% + ${(i - mid) * 38}px) ${Math.abs(i - mid) * 10}px;rotate:${(i - mid) * 9}deg;z-index:${i}` })));
+    style: `translate:calc(-50% + ${(i - mid) * 30}px) ${Math.abs(i - mid) * 8}px;rotate:${(i - mid) * 8}deg;z-index:${i}` })));
   el.setAttribute('aria-hidden', 'true');
   if (!fanned) { fanned = true; requestAnimationFrame(() => polishFan(el)); } // the join screen's one entrance
   return el;

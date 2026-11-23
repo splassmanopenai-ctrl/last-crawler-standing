@@ -340,9 +340,10 @@ function tooMany(kind, ip, max, ms) {
   return ++h.n > max;
 }
 setInterval(() => { const now = Date.now(); for (const [k, h] of hits) if (now > h.until) hits.delete(k); }, 60e3).unref();
-// Behind the Cloudflare tunnel every request arrives from the tunnel, so use the visitor address it passes along.
-// That header could be faked by a direct visitor, which only lets them dodge their own limit.
-const addressOf = req => String(req.headers['cf-connecting-ip'] || req.socket.remoteAddress);
+// Behind a proxy (Render, the Cloudflare tunnel) every request arrives from the proxy, so use the visitor address it
+// passes along; otherwise all players would share one limit. The header could be faked by someone reaching the server
+// directly, which only lets them dodge their own limit.
+const addressOf = req => String(req.headers['cf-connecting-ip'] || (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress);
 
 function json(res, status, body) {
   res.writeHead(status, { 'Content-Type': 'application/json' });

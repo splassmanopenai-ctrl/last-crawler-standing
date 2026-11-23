@@ -22,6 +22,14 @@ docker compose up -d --build
 
 Stop it with `docker compose down`. To require a host passcode, start it with `PASSCODE=something-secret docker compose up -d --build`.
 
+### Or on Render
+
+Create a Web Service from this repo; Render builds the `Dockerfile` and sets `PORT` itself. Saved players and games in progress live in a data folder, and a Render service's own disk is wiped on every deploy and restart, so:
+
+- attach a **persistent disk** (a paid feature) mounted at `/app/data`, or set `DATA_DIR` to wherever you mount it; without one, players, records and games reset on each deploy;
+- set `PASSCODE` in the service's environment, since the address is public;
+- free instances sleep when idle, so the first visit after a quiet spell takes a little while to load.
+
 ### Letting friends in
 
 - **Same Wi-Fi:** friends open `http://<your-computer's-IP>:3000`.

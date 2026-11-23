@@ -1,7 +1,7 @@
 // Building blocks shared by every screen: elements, buttons, toasts, cards, coins, QR codes.
 // The scripts in public/js load in order (ui, net, fx, screens, app) and share their top-level names.
 const { ROLES, REACTIONS, actionsFor, rolesFor, awards } = window.Game;
-const ART_V = 6; // bump when card art changes: phones cache images for a day
+const ART_V = 7; // bump when card art changes: phones cache images for a day
 
 // The back of every card: a pulp skull on show-red. One drawing, used by rivals' hidden cards and the bluff showdown.
 const CARD_BACK = 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 80">
@@ -50,15 +50,10 @@ function qrFor(link) {
 }
 
 // Blank parchment on each card art, as [left, top, width, height] in % of the image (live card, then its -dead version).
-// Most banner cards (3:4) share one parchment position; Carl's cards are taller and Zev still uses the older 1:2 art
-// with no name banner.
+// Every card (3:4, with a name banner) shares one parchment position, except Carl's taller cards.
 const NEW_SLOT = [8, 68, 84, 18];
-const SLOTS = {
-  backstabber: [8, 79.5, 84, 10], 'backstabber-dead': [8, 68, 84, 17],
-  changeling: [8.6, 82.8, 89.1, 13.7], 'changeling-dead': [8.6, 78.9, 89.1, 13.7],
-};
-const SIZES = { backstabber: [400, 596], 'backstabber-dead': [400, 596], changeling: [256, 512], 'changeling-dead': [256, 512] };
-const NO_BANNER = new Set(['changeling', 'changeling-dead']);
+const SLOTS = { backstabber: [8, 79.5, 84, 10], 'backstabber-dead': [8, 68, 84, 17] };
+const SIZES = { backstabber: [400, 596], 'backstabber-dead': [400, 596] };
 const artSize = art => SIZES[art] || [400, 536];
 
 function card(role, cls, onclick, foot) {
@@ -69,8 +64,8 @@ function card(role, cls, onclick, foot) {
     h('div', { className: 'art' },
       h('img', { src: `art/${art}.jpg?v=${ART_V}`, alt: '', width: artSize(art)[0], height: artSize(art)[1] }),
       h('span', { className: 'slot', style: `left:${slot[0]}%;top:${slot[1]}%;width:${slot[2]}%;height:${slot[3]}%` }, ROLES[role].blurb)),
-    // Banner art already shows the name; the older art without a banner needs it written out.
-    h('small', {}, NO_BANNER.has(art) ? [h('b', {}, ROLES[role].name), ', '] : null, ROLES[role].title, ROLES[role].quip && h('q', {}, ROLES[role].quip)),
+    // The name is on the card's banner, so only the title goes underneath.
+    h('small', {}, ROLES[role].title, ROLES[role].quip && h('q', {}, ROLES[role].quip)),
     foot && h('b', { className: 'foot' }, foot));
   if (onclick) b.setAttribute('aria-pressed', cls === 'on');
   return b;
