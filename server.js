@@ -4,7 +4,8 @@ const { newGame, act, view, waitingOn, autoMove, forfeit, actionsFor, revive, RE
 
 const PORT = process.env.PORT || 3000;
 const PASSCODE = process.env.PASSCODE || '';
-const BOT_DELAY = Number(process.env.BOT_DELAY) || 900; // ms a bot "thinks" before moving; tests shorten it // if set, required to create a room
+const BOT_DELAY = Number(process.env.BOT_DELAY) || 900; // ms a bot "thinks" before moving; tests shorten it
+const AWAY_MS = Number(process.env.AWAY_MS) || 120e3; // a player whose phone has been disconnected this long can be skipped
 const PUBLIC = path.join(__dirname, 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.jpg': 'image/jpeg', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
 // Changes every time the server starts. Phones that kept the page open across a rebuild see a new value and reload,
@@ -32,6 +33,39 @@ function save() {
 const hash = s => crypto.createHash('sha256').update(String(s)).digest();
 const cleanName = name => String(name || '').trim().slice(0, 16);
 
+// Player cards: each player's saved state, signed by the server and copied onto the phones of everyone they play
+// with. If this server forgets (a wiped disk, a fresh deploy), the next phone to visit hands the cards back.
+// The signing key must outlive the disk for that to work: set STATS_KEY, or it is kept next to players.json.
+// Servers sharing one STATS_KEY can also share players. shortcut: newest card wins whole; two servers updating the
+// same player at once keep only the later change, fine while friends play on one server at a time.
+const SIGN = (() => {
+  if (process.env.STATS_KEY) return process.env.STATS_KEY;
+  const f = path.join(path.dirname(DATA), 'stats.key');
+  try { return fs.readFileSync(f, 'utf8'); } catch { /* first run */ }
+  const k = crypto.randomBytes(32).toString('hex');
+  try { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, k); } catch (e) { console.error('Could not save stats.key:', e.message); }
+  return k;
+})();
+const sign = d => crypto.createHmac('sha256', SIGN).update(d).digest('hex');
+const touch = id => { players[id].at = Date.now(); save(); }; // every change gets a timestamp, so the newest card wins
+function cardOf(id) {
+  const { name, key, known, record, points, at } = players[id];
+  const d = JSON.stringify({ id, name, key, known, record, points, at: at || 0 });
+  return { d, s: sign(d) };
+}
+// Take back any card that is genuine and newer than what this server holds.
+function absorb(cards) {
+  if (!Array.isArray(cards)) return;
+  for (const c of cards.slice(0, 100)) {
+    if (!c || typeof c.d !== 'string' || typeof c.s !== 'string' || c.s.length !== 64) continue;
+    if (!crypto.timingSafeEqual(Buffer.from(sign(c.d)), Buffer.from(c.s))) continue;
+    const { id, ...p } = JSON.parse(c.d);
+    if (!players[id] || (players[id].at || 0) < p.at) { players[id] = p; save(); }
+  }
+}
+// Points earned outside any one game, banked for badges and perks later.
+const pointsFor = (won, callsRight) => 1 + (won ? 3 : 0) + callsRight;
+
 // A phone proves who it is with the id and secret it was given on first visit.
 function auth(player) {
   const p = player && typeof player.id === 'string' && players[player.id];
@@ -57,8 +91,21 @@ const roomView = (room, i) => ({
   game: room.game ? view(room.game, i) : null,
   friends: room.game ? [] : friendsOf(room, room.players[i].pid),
   record: room.players[i].pid ? recordOf(room.players[i].pid) : null,
+  points: room.players[i].pid ? players[room.players[i].pid].points || 0 : 0,
+  // Everyone's player cards, for each phone to keep: shared in the lobby and after each game, when they change.
+  cards: room.game && room.game.phase !== 'over' ? null : [...new Set(room.players.map(p => p.pid).filter(Boolean))].map(cardOf),
   timer: room.timer || 0, variant: !!room.variant, left: room.deadline ? room.deadline - Date.now() : null, // ms left, so phone clocks need not agree
+  away: awayList(room),
 });
+// Seats whose phone has been gone a while: the others may move for them, so one closed browser can't stall a game.
+const isAway = p => !p.bot && !p.kicked && !p.res && p.away && Date.now() - p.away > AWAY_MS;
+const awayList = room => room.players.map(isAway);
+
+// TV view: the table as seen from no seat at all (no hidden cards), for a shared screen. Anyone with the room code
+// can watch, as anyone with it can join the lobby.
+const tvView = room => ({ build: BUILD, tv: true, code: room.code, names: room.players.map(p => p.name), bots: room.players.map(p => !!p.bot),
+  game: room.game ? view(room.game, -1) : null, timer: room.timer || 0, variant: !!room.variant,
+  left: room.deadline ? room.deadline - Date.now() : null, away: awayList(room) });
 
 const GONE = 'event: gone\ndata: {}\n\n'; // tells a phone to forget its seat
 const drop = p => p.res && p.res.end(GONE);
@@ -92,8 +139,9 @@ function record(room) {
     const r = p.record || (p.record = { games: 0, wins: 0, callsRight: 0, lies: 0 });
     r.games++; if (g.winner === i) r.wins++;
     r.callsRight += g.stats[i].callsRight; r.lies += g.stats[i].lies;
+    p.points = (p.points || 0) + pointsFor(g.winner === i, g.stats[i].callsRight);
+    touch(seat.pid);
   });
-  save();
 }
 const recordOf = id => players[id].record || { games: 0, wins: 0, callsRight: 0, lies: 0 };
 
@@ -118,7 +166,7 @@ function saveRooms() {
 }
 try {
   for (const r of JSON.parse(fs.readFileSync(ROOMS, 'utf8'))) {
-    rooms.set(r.code, { ...r, ready: new Set(r.ready), players: r.players.map(p => ({ ...p, res: null })), game: r.game && revive(r.game) });
+    rooms.set(r.code, { ...r, ready: new Set(r.ready), players: r.players.map(p => ({ ...p, res: null, away: Date.now() })), game: r.game && revive(r.game) });
   }
 } catch { /* first run, or no rooms */ }
 
@@ -126,6 +174,8 @@ function push(room) {
   record(room);
   room.touched = Date.now();
   room.players.forEach((p, i) => p.res && p.res.write(`data: ${JSON.stringify(roomView(room, i))}\n\n`));
+  if (room.tvs && room.tvs.size) { const msg = `data: ${JSON.stringify(tvView(room))}\n\n`; room.tvs.forEach(r => r.write(msg)); }
+  room.awaySeen = awayList(room).join();
   nudgeBots(room);
   saveRooms();
 }
@@ -153,7 +203,7 @@ function startGame(room) {
   room.game = newGame(staying.map(p => p.name), Math.random, !!room.variant);
   const pids = [...new Set(staying.map(p => p.pid).filter(Boolean))]; // everyone here has now played together
   for (const a of pids) for (const b of pids) if (a !== b) players[a].known[b] = Date.now();
-  if (pids.length > 1) save();
+  if (pids.length > 1) pids.forEach(touch);
 }
 
 // Bots, for practice games: a simple, slightly reckless opponent. Never sees hidden cards except its own.
@@ -206,7 +256,7 @@ const api = {
   leaders() {
     return Object.values(players).filter(p => p.record && p.record.games > 0)
       .sort((a, b) => b.record.wins - a.record.wins || a.record.games - b.record.games).slice(0, 20)
-      .map(p => ({ name: p.name, wins: p.record.wins, games: p.record.games }));
+      .map(p => ({ name: p.name, wins: p.record.wins, games: p.record.games, points: p.points || 0 }));
   },
 
   // Host tool: a one-time link that moves a player's seat to another phone (theirs died, or they switched).
@@ -230,11 +280,13 @@ const api = {
     me.reacted = Date.now();
     const msg = `event: react\ndata: ${JSON.stringify({ name: me.name, i })}\n\n`;
     s.room.players.forEach(p => p.res && p.res.write(msg));
+    if (s.room.tvs) s.room.tvs.forEach(r => r.write(msg));
     return {};
   },
 
   // Who am I? Creates a saved player on first visit (when a name is given), and lists waiting invites.
-  hello({ player, name }) {
+  hello({ player, name, cards }) {
+    absorb(cards); // this phone's copies of player cards, in case this server has forgotten them
     let id = auth(player), secret;
     name = cleanName(name);
     if (!id) {
@@ -242,9 +294,9 @@ const api = {
       id = crypto.randomBytes(8).toString('hex');
       secret = crypto.randomBytes(16).toString('hex');
       players[id] = { name, key: hash(secret).toString('hex'), known: {} };
-      save();
-    } else if (name && name !== players[id].name) { players[id].name = name; save(); }
-    return { build: BUILD, known: true, id, secret, name: players[id].name, record: recordOf(id), invites: openInvites(id) };
+      touch(id);
+    } else if (name && name !== players[id].name) { players[id].name = name; touch(id); }
+    return { build: BUILD, known: true, id, secret, name: players[id].name, record: recordOf(id), points: players[id].points || 0, invites: openInvites(id), card: cardOf(id) };
   },
 
   // Invite someone you have played with before into the room you are sitting in.
@@ -313,6 +365,13 @@ const api = {
         if (playing) throw 'Game in progress';
         startGame(room);
       }
+    } else if (type === 'skip') {
+      // Anyone still playing may make the dullest move for a seat whose phone has been gone a while.
+      const g = room.game, t = move.target;
+      if (!g || g.phase === 'over') throw 'Game has not started';
+      if (!Number.isInteger(t) || !room.players[t] || !isAway(room.players[t]) || !waitingOn(g).includes(t)) throw "They're not holding up the game";
+      g.log.push(`${room.players[i].name} skipped ${room.players[t].name}, who wandered off.`);
+      autoMove(g, t);
     } else if (type === 'ready') {
       // Rematch: everyone taps ready; when the last human does, the next game starts by itself.
       if (!room.game || room.game.phase !== 'over') throw 'The game is still on';
@@ -358,11 +417,23 @@ http.createServer((req, res) => {
     const ip = addressOf(req);
     if (tooMany('api', ip, 120, 60e3)) return json(res, 429, { error: 'Slow down a little and try again.' });
     let body = '';
-    req.on('data', d => { body += d; if (body.length > 4096) req.destroy(); });
+    req.on('data', d => { body += d; if (body.length > 64e3) req.destroy(); }); // room for a phone's player cards
     req.on('end', () => {
       try { json(res, 200, api[name].call({ ip }, JSON.parse(body))); }
       catch (e) { json(res, 400, { error: typeof e === 'string' ? e : 'Bad request' }); }
     });
+    return;
+  }
+
+  if (name === 'events' && url.searchParams.has('tv')) {
+    const room = rooms.get(String(url.searchParams.get('code')).toUpperCase());
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' });
+    if (!room) return res.end(GONE);
+    room.tvs = room.tvs || new Set();
+    if (room.tvs.size >= 4) return res.end(GONE);
+    room.tvs.add(res);
+    res.write(`data: ${JSON.stringify(tvView(room))}\n\n`);
+    req.on('close', () => room.tvs.delete(res));
     return;
   }
 
@@ -372,9 +443,9 @@ http.createServer((req, res) => {
     if (!s) return res.end(GONE);
     const p = s.room.players[s.i];
     if (p.res) p.res.end();
-    p.res = res;
+    p.res = res; p.away = null;
     res.write(`data: ${JSON.stringify(roomView(s.room, s.i))}\n\n`);
-    req.on('close', () => { if (p.res === res) p.res = null; });
+    req.on('close', () => { if (p.res === res) { p.res = null; p.away = Date.now(); } });
     return;
   }
 
@@ -393,6 +464,8 @@ http.createServer((req, res) => {
 setInterval(() => {
   for (const room of rooms.values()) {
     room.players.forEach(p => p.res && p.res.write(': ping\n\n')); // keeps tunnels and proxies from closing idle streams
-    if (Date.now() - room.touched > 6 * 3600e3) { clearTimeout(room.t); room.players.forEach(drop); rooms.delete(room.code); saveRooms(); }
+    if (room.tvs) room.tvs.forEach(r => r.write(': ping\n\n'));
+    if (room.game && room.game.phase !== 'over' && awayList(room).join() !== room.awaySeen) push(room); // someone just counted as away
+    if (Date.now() - room.touched > 6 * 3600e3) { clearTimeout(room.t); room.players.forEach(drop); if (room.tvs) room.tvs.forEach(r => r.end(GONE)); rooms.delete(room.code); saveRooms(); }
   }
 }, 25e3).unref();

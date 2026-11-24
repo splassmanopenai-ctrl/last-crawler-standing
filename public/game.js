@@ -325,7 +325,8 @@
 
   // What one player is allowed to see.
   function view(g, pid) {
-    const spectator = g.phase === 'over' || !alive(g.players[pid]);
+    const seated = g.players[pid]; // no seat (pid -1) is the TV view: no hidden cards until the game is over
+    const spectator = g.phase === 'over' || (seated && !alive(seated));
     return {
       phase: g.phase, turn: g.turn, cur: g.cur, block: g.block, waiting: g.waiting, canChallenge: g.canChallenge,
       loser: g.loser, winner: g.winner, log: g.log.slice(-40), ev: g.ev, seq: g.seq, out: g.out,

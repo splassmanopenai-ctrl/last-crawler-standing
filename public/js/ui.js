@@ -1,6 +1,6 @@
 // Building blocks shared by every screen: elements, buttons, toasts, cards, coins, QR codes.
 // The scripts in public/js load in order (ui, net, fx, screens, app) and share their top-level names.
-const { ROLES, REACTIONS, actionsFor, rolesFor, awards } = window.Game;
+const { ROLES, REACTIONS, actionsFor, rolesFor, awards, waitingOn } = window.Game;
 const ART_V = 7; // bump when card art changes: phones cache images for a day
 
 // The back of every card: a pulp skull on show-red. One drawing, used by rivals' hidden cards and the bluff showdown.

@@ -10,6 +10,25 @@ let session = JSON.parse(localStorage.getItem(KEY) || 'null');
   }
 }
 let handoff = null; // host tools: the seat link being shown
+// TV view (?tv=CODE): a shared screen that watches a room from no seat.
+const tv = (new URLSearchParams(location.search).get('tv') || '').toUpperCase() || null;
+
+// Player cards: signed copies of the saved players this phone has played with (and its own). If the server forgets
+// its players, every phone hands these back on its next visit and the records come back. Newest copy wins.
+const CARDS = 'lcs-cards';
+function keepCards(list) {
+  if (!list) return;
+  let all;
+  try { all = JSON.parse(localStorage.getItem(CARDS) || '{}'); } catch { all = {}; }
+  for (const c of list) {
+    const d = JSON.parse(c.d), had = all[d.id];
+    if (!had || JSON.parse(had.d).at < d.at) all[d.id] = c;
+  }
+  // shortcut: keep the 100 most recently updated, plenty for a friends group
+  const top = Object.entries(all).sort((a, b) => JSON.parse(b[1].d).at - JSON.parse(a[1].d).at).slice(0, 100);
+  try { localStorage.setItem(CARDS, JSON.stringify(Object.fromEntries(top))); } catch { /* storage full: the server still has them */ }
+}
+const myCards = () => { try { return Object.values(JSON.parse(localStorage.getItem(CARDS) || '{}')); } catch { return []; } };
 let build = null; // the server version this page was loaded from
 // The server restarted with newer code than this page: reload to pick it up. Sessions are in localStorage, so it's seamless.
 function stale(b) {
@@ -40,15 +59,16 @@ const send = move => { picking = choosing = null; post('move', { ...session, mov
 
 function connect() {
   if (es) es.close();
-  es = new EventSource(`/api/events?code=${session.code}&token=${session.token}`);
+  es = new EventSource(tv ? `/api/events?code=${tv}&tv=1` : `/api/events?code=${session.code}&token=${session.token}`);
   es.onmessage = e => {
     const next = JSON.parse(e.data);
     if (stale(next.build)) return;
+    keepCards(next.cards);
     prev = v && v.game; v = next; deadlineAt = v.left == null ? null : Date.now() + v.left; fresh = true; render(); fresh = false; };
   // The server says "gone" when the room no longer exists. Plain errors are not trusted for this:
   // a page reload also fires one. Dropped connections retry on their own.
   // Rooms only vanish when the server restarts, which may bring new code, so reload rather than just leave.
-  es.addEventListener('gone', () => { leave(); location.reload(); });
+  es.addEventListener('gone', () => { if (tv) { es.close(); v = null; render(); return; } leave(); location.reload(); });
   es.addEventListener('react', e => heckle(JSON.parse(e.data)));
 }
 
@@ -64,8 +84,9 @@ const ME = 'lcs-player';
 let me = JSON.parse(localStorage.getItem(ME) || 'null'), profile = null, prefilled = false;
 
 async function hello(name) {
-  const r = await post('hello', { player: me, name });
+  const r = await post('hello', { player: me, name, cards: myCards() });
   if (stale(r.build)) return;
+  keepCards(r.card && [r.card]);
   if (!r.known) { me = profile = null; localStorage.removeItem(ME); return; }
   if (r.secret) { me = { id: r.id, secret: r.secret }; localStorage.setItem(ME, JSON.stringify(me)); }
   profile = r;
@@ -80,7 +101,7 @@ async function refreshHome() {
   if (!prefilled && !name.value) name.value = profile.name;
   prefilled = true;
   const r = profile.record;
-  fill(box, r && r.games > 0 && h('p', { className: 'tag' }, `Welcome back, ${profile.name}. ${plural(r.wins, 'win')} in ${plural(r.games, 'game')}.`),
+  fill(box, r && r.games > 0 && h('p', { className: 'tag' }, `Welcome back, ${profile.name}. ${plural(r.wins, 'win')} in ${plural(r.games, 'game')}. ${plural(profile.points, 'point')} banked.`),
     profile.invites.length > 0 && h('div', { className: 'panel' }, h('h2', {}, "You're invited"),
     profile.invites.map(i => btn(`Join ${i.from}'s room`, () => join(i.code), 'hot', `Room ${i.code}`))));
 }

@@ -11,9 +11,53 @@ function hallOfFame() {
   const box = h('details', {}, h('summary', {}, 'Hall of fame'), list);
   box.addEventListener('toggle', () => box.open && post('leaders', {}).then(rows => fill(list,
     rows.length ? rows.map((r, i) => h('div', { className: 'rival' }, h('span', { className: 'note' }, `${i + 1}.`), h('span', { className: 'name' }, r.name),
-      h('span', { className: 'note' }, `${plural(r.wins, 'win')} in ${plural(r.games, 'game')}`)))
+      h('span', { className: 'note' }, `${plural(r.wins, 'win')} in ${plural(r.games, 'game')}, ${plural(r.points, 'pt')}`)))
       : h('p', { className: 'tag' }, 'Nobody has finished a game yet. Be the first.')), () => fill(list, h('p', { className: 'tag' }, 'Could not load the hall of fame.'))));
   return box;
+}
+
+// How to play, built from the rules in game.js so it always matches the card set in use.
+function howToPlay(variant, open = false) {
+  const A = actionsFor(variant), names = rs => rs.map(r => ROLES[r].name).join(' or ');
+  const box = h('details', { className: 'howto' }, h('summary', {}, 'How to play'),
+    h('h2', {}, 'The goal'),
+    h('p', {}, 'Everyone starts with 2 hidden cards and 2 gold. Lose both cards and you are out. The last crawler with a card left wins.'),
+    h('h2', {}, 'Your turn'),
+    h('p', {}, 'Take one action. Some need a character: you may claim any character, whether you hold it or not.'),
+    Object.values(A).map(a => h('p', {}, h('b', {}, a.name), ` ${a.text}.`, a.claim && [' Claim ', chip(a.claim), '.'],
+      a.blockBy && ` Blocked by ${names(a.blockBy)}.`, !a.claim && !a.blockBy && a.cost && ' Cannot be stopped.')),
+    h('p', {}, `With 10 or more gold you must ${A.coup.name}.`),
+    h('h2', {}, 'Calling bluffs'),
+    h('p', {}, 'When someone claims a character, anyone may call the bluff. If they lied, they lose a card. If they told the truth, the caller loses a card, and the claimant swaps the proven card for a fresh one.'),
+    h('p', {}, 'Blocks are claims too, so a block can be called out the same way.'),
+    h('h2', {}, 'The cast'),
+    rolesFor(variant).map(k => h('p', {}, chip(k), ` ${ROLES[k].title}. ${ROLES[k].text}`)));
+  box.open = open;
+  return box;
+}
+
+// A rival's row at the table: name, cards (backs unless you may see them), gold. Used by the game and the TV.
+function seatRow(g, p, old) {
+  const pop = old && old[p.id].coins !== p.coins ? ' pop' : '';
+  const slam = i => old && p.cards[i].revealed && !old[p.id].cards[i].revealed ? ' slam' : '';
+  return h('div', { className: `rival${g.turn === p.id && g.phase !== 'over' ? ' turn' : ''}${p.cards.every(c => c.revealed) ? ' dead' : ''}` },
+    h('span', { className: 'name' }, p.name),
+    (v.away || [])[p.id] && g.phase !== 'over' && h('span', { className: 'note' }, 'away'),
+    p.cards.map((c, i) => c.revealed ? chip(c.role, slam(i)) : c.role ? chip(c.role, ' peek')
+      : Object.assign(h('span', { className: 'back' }), { title: 'Hidden card' })),
+    p.cards.every(c => c.revealed) && Object.assign(h('span', { className: 'cancelled' }, 'Cancelled'), { id: `out-${p.id}` }),
+    gold(p.coins, pop, old && old[p.id].coins, p.id),
+    v.host && g.phase !== 'over' && p.cards.some(c => !c.revealed) && kickBtn(p.id, p.name));
+}
+
+// A phone that has been gone a while is holding up the game: anyone still playing may move for it.
+function awayPrompt(g, me) {
+  if (g.phase === 'over' || !g.players[me].cards.some(c => !c.revealed)) return null;
+  const stuck = waitingOn(g).filter(id => id !== me && (v.away || [])[id]);
+  return stuck.length > 0 && h('div', { className: 'panel' }, stuck.map(id => [
+    h('p', {}, `${g.players[id].name}'s phone has been gone for a while.`),
+    btn('Skip their move', () => send({ type: 'skip', target: id }), 'hot', 'The System makes the dullest move for them'),
+    v.host && h('p', { className: 'tag' }, 'Or remove them with ✕ next to their name.')]));
 }
 
 // The cast, fanned like a hand of cards.
@@ -52,6 +96,7 @@ function renderJoin() {
     h('div', { className: 'group' }, h('h2', {}, 'Or start your own'), btn('Host a new game', () => join('')),
       btn('Practice against bots', () => join('', true), 'ghost', 'A quick game to learn the ropes'),
       h('details', {}, h('summary', {}, 'My server needs a passcode'), pass)),
+    howToPlay(false),
     hallOfFame(),
     h('details', {}, h('summary', {}, 'Switching phones?'),
       me && h('p', {}, 'This phone is your player. To move it, copy this code to the other phone. Keep it private.'), me && mine,
@@ -83,7 +128,7 @@ function renderLobby() {
       v.names.map((n, i) => h('div', { className: 'rival' }, h('span', { className: 'name' }, n), i === 0 && h('span', { className: 'note' }, 'host'), i === v.you && h('span', { className: 'note' }, 'you'), v.host && i > 0 && kickBtn(i, n)))),
     settings(),
     v.practice && h('p', { className: 'tag' }, 'Practice round: your opponents are bots, and this game does not count toward your record.'),
-    v.record && v.record.games > 0 && h('p', { className: 'tag' }, `Your record: ${plural(v.record.wins, 'win')} in ${plural(v.record.games, 'game')}.`),
+    v.record && v.record.games > 0 && h('p', { className: 'tag' }, `Your record: ${plural(v.record.wins, 'win')} in ${plural(v.record.games, 'game')}. ${plural(v.points, 'point')} banked.`),
     !v.practice && v.friends.length > 0 && h('div', { className: 'group' }, h('h2', {}, 'Invite players you know'),
       v.friends.slice().sort((a, b) => b.wins - a.wins).map(f => h('div', { className: 'rival' }, h('span', { className: 'name' }, f.name),
         h('span', { className: 'note' }, plural(f.wins, 'win')),
@@ -92,6 +137,10 @@ function renderLobby() {
       h('p', { className: 'tag' }, 'They see the invite when they open the game.')),
     v.host ? btn('Start the show', () => send({ type: 'start' }), '', v.names.length < 2 ? 'Needs at least 2 crawlers' : null)
       : h('p', { className: 'tag' }, `Waiting for ${v.names[0]} to start the show…`),
+    howToPlay(v.variant),
+    h('details', {}, h('summary', {}, 'Show it on a TV'),
+      h('p', {}, 'Open this on a TV or laptop browser to show the table to the room. It never shows hidden cards:'),
+      h('a', { href: `/?tv=${v.code}`, target: '_blank' }, `${location.host}/?tv=${v.code}`)),
     btn('Leave', leave, 'ghost'),
   );
 }
@@ -255,13 +304,8 @@ function renderGame() {
       h('span', { style: `left:${(i * 37) % 100}%;background:${Object.values(ROLES)[i % 6].color}` }))),
     h('div', { className: 'bar' }, h('div', {}, h('h2', {}, `Room ${v.code}`), h('p', { className: 'tag' }, `Live to ${(2.4 + deaths * 1.7).toFixed(1)}M viewers`)), mute),
     h('div', { id: 'announcer', className: news ? 'in' : '' }, headlines.map(l => h('p', {}, l))),
-    g.players.filter(p => p.id !== me).map(p => h('div', { className: `rival${g.turn === p.id && g.phase !== 'over' ? ' turn' : ''}${p.cards.every(c => c.revealed) ? ' dead' : ''}` },
-      h('span', { className: 'name' }, p.name),
-      p.cards.map((c, i) => c.revealed ? chip(c.role, slam(p, i)) : c.role ? chip(c.role, ' peek')
-        : Object.assign(h('span', { className: 'back' }), { title: 'Hidden card' })),
-      p.cards.every(c => c.revealed) && Object.assign(h('span', { className: 'cancelled' }, 'Cancelled'), { id: `out-${p.id}` }),
-      gold(p.coins, pop(p), old && old[p.id].coins, p.id),
-      v.host && g.phase !== 'over' && p.cards.some(c => !c.revealed) && kickBtn(p.id, p.name))),
+    g.players.filter(p => p.id !== me).map(p => seatRow(g, p, old)),
+    awayPrompt(g, me),
     h('div', { className: myMove || g.phase === 'over' ? 'panel' : 'status' }, h('div', { id: 'clock', className: 'clock' }), prompt(g, me),
       v.practice && myMove && TIPS[g.phase] && h('p', { className: 'tag' }, TIPS[g.phase])),
     h('div', { className: 'bar' }, h('h2', {}, 'Your cards'), gold(my.coins, pop(my), old && old[me].coins, me)),
@@ -281,17 +325,40 @@ function renderGame() {
     })),
     h('details', {}, h('summary', {}, 'Show log'), g.log.slice().reverse().map(l => h('p', {}, l))),
     v.host && !v.practice && hostTools(g),
-    h('details', {}, h('summary', {}, 'Rules'),
-      h('p', {}, 'Everyone has 2 hidden cards. Lose both and you are dead. Last one alive wins.'),
-      h('p', {}, 'You may claim any role, held or not. If someone calls your bluff and you lied, you lose a card. If you told the truth, they do.'),
-      rolesFor(g.variant).map(k => h('p', {}, chip(k), ` ${ROLES[k].title}. ${ROLES[k].text}`)),
-      h('p', {}, `Anyone: Grind +1, Fan Donations +2, ${actionsFor(g.variant).coup.name} (7 gold, cannot be stopped; forced at 10+ gold).`)),
+    howToPlay(g.variant),
     g.phase === 'over' && btn('Leave room', leave, 'ghost'),
   );
   if (motion) polish(motion);
 }
 
+// The TV: the whole table for a room to watch, big. No seat, so no hidden cards and no buttons.
+function renderTV() {
+  document.body.classList.add('tv');
+  if (!v) return fill(app, h('h1', {}, 'Last Crawler Standing'), h('p', { className: 'tag' }, `Room ${tv} is not open. Start a room on a phone, then open this page again.`));
+  if (!v.game) return fill(app, h('h1', {}, 'Last Crawler Standing'),
+    h('div', { className: 'tvlobby' }, h('div', { className: 'group' }, h('h2', {}, 'Join on your phone'), h('div', { className: 'code' }, v.code), qrFor(`${location.origin}/?room=${v.code}`)),
+      h('div', { className: 'group' }, h('h2', {}, `Crawlers (${v.names.length} of 6)`), v.names.map(n => h('p', { className: 'tvname' }, n)))),
+    h('p', { className: 'tag' }, 'Waiting for the host to start the show…'));
+  const g = v.game, name = id => g.players[id].name;
+  const old = fresh && prev && prev.players.length === g.players.length ? prev.players : null;
+  const news = fresh && (!prev || prev.log[prev.log.length - 1] !== g.log[g.log.length - 1]);
+  if (news) headlines = g.log.slice(Math.max(prev ? g.log.lastIndexOf(prev.log[prev.log.length - 1]) + 1 : g.log.length - 1, g.log.length - 4));
+  else if (!headlines.length) headlines = g.log.slice(-1);
+  const status = g.phase === 'over' ? [h('p', { className: 'winner' }, `${name(g.winner)} is the Last Crawler Standing!`),
+    g.stats && h('div', { className: 'awards' }, h('h2', {}, "The System's awards"), awards(g.stats, g.out).map(x => h('p', {}, h('b', {}, x.title), ` ${name(x.id)}. ${x.text}`)))]
+    : h('p', {}, `Waiting on ${waitingOn(g).map(name).join(', ')}…`);
+  fill(app,
+    h('div', { className: 'bar' }, h('h2', {}, `Room ${v.code}`), h('div', { id: 'clock', className: 'clock' })),
+    h('div', { id: 'announcer', className: news ? 'in' : '' }, headlines.map(l => h('p', {}, l))),
+    h('div', { className: 'tvtable' }, g.players.map(p => seatRow(g, p, old))),
+    h('div', { className: g.phase === 'over' ? 'panel' : 'status' }, status),
+    h('div', { className: 'tvlog' }, g.log.slice(-8).reverse().map(l => h('p', {}, l))));
+  if (fresh) polish({ g, ev: !prev || prev.seq !== g.seq ? g.ev : [], deal: (!prev || prev.phase === 'over') && g.phase !== 'over', yourMove: false,
+    win: g.phase === 'over' && (!prev || prev.phase !== 'over') });
+}
+
 function render() {
+  if (tv) { renderTV(); return tick(); }
   if (!session || !v) return session ? fill(app,h('p', { className: 'tag' }, 'Reconnecting…')) : renderJoin();
   v.game ? renderGame() : renderLobby();
   tick();

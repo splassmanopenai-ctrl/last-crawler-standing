@@ -7,8 +7,8 @@ const PORT = 3900 + Math.floor(Math.random() * 90);
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcs-'));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-async function boot() {
-  const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], { env: { ...process.env, PORT, DATA_DIR: dir, PASSCODE: '', BOT_DELAY: '15' } });
+async function boot(env = {}) {
+  const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], { env: { ...process.env, PORT, DATA_DIR: dir, PASSCODE: '', BOT_DELAY: '15', AWAY_MS: '300', ...env } });
   for (let i = 0; i < 50; i++) { try { await fetch(`http://localhost:${PORT}/`); return child; } catch { await sleep(100); } }
   throw new Error('server did not start');
 }
@@ -45,6 +45,7 @@ test('players are saved, learn who they played with, and can invite them', async
     assert.ok((await post('move', { code: r1.code, token: r1.token, move: { type: 'kick', target: 1 } })).ok);
     const annRec = (await post('hello', { player: A })).record, boRec = (await post('hello', { player: B })).record;
     assert.deepStrictEqual([annRec.games, annRec.wins, boRec.games, boRec.wins], [1, 1, 1, 0]);
+    assert.deepStrictEqual([(await post('hello', { player: A })).points, (await post('hello', { player: B })).points], [4, 1]); // 1 a game, 3 a win
 
     // A restart keeps the players but, as before, not the rooms.
     await sleep(400);
@@ -159,5 +160,56 @@ test('one device cannot flood the server with rooms', async () => {
     assert.deepStrictEqual(made.filter(Boolean).length, 12);
     const r = await post('join', { name: 'One more' });
     assert.match(r.error, /Too many new rooms/);
+  } finally { server.kill(); }
+});
+
+test('player cards on phones bring players back to a server that forgot them, and cannot be forged', async () => {
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), 'lcs-'));
+  let server = await boot({ DATA_DIR: other, STATS_KEY: 'shared-key' });
+  try {
+    const a = await post('hello', { name: 'Ann' }), A = { id: a.id, secret: a.secret };
+    const b = await post('hello', { name: 'Bo' });
+    const r = await post('join', { name: 'Ann', player: A });
+    await post('join', { name: 'Bo', code: r.code, player: { id: b.id, secret: b.secret } });
+    await post('move', { code: r.code, token: r.token, move: { type: 'start' } });
+    await post('move', { code: r.code, token: r.token, move: { type: 'kick', target: 1 } }); // Ann wins
+    const lobby = await firstView(r.code, r.token);
+    assert.strictEqual(lobby.cards.length, 2); // after a game, each phone is handed everyone's cards
+    const cards = lobby.cards;
+
+    // The disk is wiped: a fresh data folder, same STATS_KEY.
+    server.kill(); await sleep(200);
+    fs.rmSync(other, { recursive: true, force: true });
+    server = await boot({ DATA_DIR: other, STATS_KEY: 'shared-key' });
+    assert.strictEqual((await post('hello', { player: A })).known, false);
+
+    // A forged card (more wins, signature kept) is ignored.
+    const annCard = cards.find(c => JSON.parse(c.d).id === a.id), fake = JSON.parse(annCard.d);
+    fake.record.wins = 99; fake.at++;
+    assert.strictEqual((await post('hello', { player: A, cards: [{ d: JSON.stringify(fake), s: annCard.s }] })).known, false);
+
+    // Ann's phone hands back both cards: Ann is known again, with her record, points and Bo as a friend.
+    const back = await post('hello', { player: A, cards });
+    assert.deepStrictEqual([back.name, back.record.wins, back.points], ['Ann', 1, 4]);
+    const room = await post('join', { name: 'Ann', player: A });
+    assert.deepStrictEqual((await firstView(room.code, room.token)).friends.map(f => f.name), ['Bo']);
+  } finally { server.kill(); fs.rmSync(other, { recursive: true, force: true }); }
+});
+
+test('a player whose phone is gone can be skipped, and a TV watches without seeing hidden cards', async () => {
+  const server = await boot();
+  try {
+    const a = await post('join', { name: 'Ann' }), b = await post('join', { name: 'Bo', code: a.code });
+    await post('move', { code: a.code, token: a.token, move: { type: 'start' } });
+    await firstView(a.code, b.token); // Bo's phone connects, then goes away
+    if ((await firstView(a.code, a.token)).game.turn === 0) await post('move', { code: a.code, token: a.token, move: { type: 'action', action: 'income' } });
+    assert.strictEqual((await post('move', { code: a.code, token: a.token, move: { type: 'skip', target: 1 } })).ok, false); // not gone long enough
+    await sleep(400);
+    assert.deepStrictEqual((await firstView(a.code, a.token)).away, [false, true]);
+    assert.ok((await post('move', { code: a.code, token: a.token, move: { type: 'skip', target: 1 } })).ok);
+    const tvView = await firstView(a.code + '&tv=1', '');
+    assert.strictEqual(tvView.tv, true);
+    assert.strictEqual(tvView.game.turn, 0); // Bo's turn was played for him
+    assert.ok(tvView.game.players.every(p => p.cards.every(c => c.role === null)));
   } finally { server.kill(); }
 });
