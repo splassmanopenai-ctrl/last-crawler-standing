@@ -45,7 +45,11 @@ test('players are saved, learn who they played with, and can invite them', async
     assert.ok((await post('move', { code: r1.code, token: r1.token, move: { type: 'kick', target: 1 } })).ok);
     const annRec = (await post('hello', { player: A })).record, boRec = (await post('hello', { player: B })).record;
     assert.deepStrictEqual([annRec.games, annRec.wins, boRec.games, boRec.wins], [1, 1, 1, 0]);
-    assert.deepStrictEqual([(await post('hello', { player: A })).points, (await post('hello', { player: B })).points], [4, 1]); // 1 a game, 3 a win
+    // Points: 1 a game, 3 a win, plus each new achievement's box (bronze 2, silver 5, gold 10).
+    const annNow = await post('hello', { player: A }), boNow = await post('hello', { player: B });
+    assert.deepStrictEqual(Object.keys(annNow.ach).sort(), ['boyscout', 'first', 'firstwin', 'untouched']);
+    assert.deepStrictEqual(Object.keys(boNow.ach).sort(), ['first', 'opening']);
+    assert.deepStrictEqual([annNow.points, boNow.points], [4 + 5 + 2 + 5 + 10, 1 + 2 + 2]);
 
     // A restart keeps the players but, as before, not the rooms.
     await sleep(400);
@@ -175,6 +179,8 @@ test('player cards on phones bring players back to a server that forgot them, an
     await post('move', { code: r.code, token: r.token, move: { type: 'kick', target: 1 } }); // Ann wins
     const lobby = await firstView(r.code, r.token);
     assert.strictEqual(lobby.cards.length, 2); // after a game, each phone is handed everyone's cards
+    assert.ok(lobby.achieved.includes('firstwin')); // and its own new achievements, for the popup
+    assert.ok(lobby.game.log.includes('New Achievement! Ann: Last Crawler Standing (For Now)'));
     const cards = lobby.cards;
 
     // The disk is wiped: a fresh data folder, same STATS_KEY.
@@ -190,9 +196,11 @@ test('player cards on phones bring players back to a server that forgot them, an
 
     // Ann's phone hands back both cards: Ann is known again, with her record, points and Bo as a friend.
     const back = await post('hello', { player: A, cards });
-    assert.deepStrictEqual([back.name, back.record.wins, back.points], ['Ann', 1, 4]);
+    assert.deepStrictEqual([back.name, back.record.wins, back.points, Object.keys(back.ach).length], ['Ann', 1, 26, 4]);
     const room = await post('join', { name: 'Ann', player: A });
-    assert.deepStrictEqual((await firstView(room.code, room.token)).friends.map(f => f.name), ['Bo']);
+    const alone = await firstView(room.code, room.token);
+    assert.deepStrictEqual(alone.friends.map(f => f.name), ['Bo']);
+    assert.strictEqual(alone.cards.length, 2); // Bo isn't here, but Ann's phone still gets his card as a backup
   } finally { server.kill(); fs.rmSync(other, { recursive: true, force: true }); }
 });
 

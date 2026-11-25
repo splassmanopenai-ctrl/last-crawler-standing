@@ -229,3 +229,23 @@ function polish({ g, ev, deal, yourMove, win }) {
   if (win) for (const s of $('.confetti span')) animate(s, { y: innerHeight + 80, x: rnd(-90, 90), rotate: rnd(-720, 720),
     duration: rnd(1800, 2900), delay: rnd(0, 600), ease: 'inQuad' });
 }
+
+// New Achievement! The System's notice, one at a time; tap to see the next. Stays until dismissed, so nobody misses it.
+function achieveShow(keys) {
+  const k = keys[0];
+  if (!k) return;
+  const a = ACHIEVEMENTS[k], box = BOXES[a.box];
+  const ok = btn(keys.length > 1 ? 'Next' : 'Keep crawling', () => { el.remove(); achieveShow(keys.slice(1)); }, 'hot');
+  const el = h('div', { className: 'achieve' }, h('div', { className: `notice box-${a.box}` },
+    h('p', { className: 'burst' }, 'New Achievement!'), h('h2', {}, a.title), h('p', {}, a.text),
+    h('p', { className: 'reward' }, h('b', {}, `Reward: you've received a ${box.name}!`), ` Inside: ${a.reward} Plus ${box.points} points.`), ok));
+  el.setAttribute('role', 'dialog');
+  el.setAttribute('aria-label', `New achievement: ${a.title}`);
+  document.body.append(el);
+  ok.focus();
+  tone([392, 523, 659, 1047], 0.12);
+  if (moving()) {
+    window.anime.animate(el.querySelector('.notice'), { scale: { from: .3 }, rotate: { from: -8 }, opacity: { from: 0 }, duration: 550, ease: 'outBack' });
+    window.anime.animate(el.querySelector('.burst'), { scale: { from: 2.4 }, duration: 500, delay: 200, ease: 'outBack' });
+  }
+}

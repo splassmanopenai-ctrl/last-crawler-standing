@@ -75,6 +75,62 @@
     { title: 'Piñata', pick: (st) => top(st, s => s.stolenFrom), say: s => `Had ${s.stolenFrom} gold chomped.` },
     { title: 'First to Die', pick: (st, out) => out.length ? out[0] : null, say: () => 'The viewers barely learned their name.' },
   ];
+  // Achievements: The System notices what you did and rewards you, sort of. Each is earned once per player,
+  // from one finished game (game) or a career record (career), and pays its box's points.
+  const BOXES = {
+    bronze: { name: 'Bronze Box', points: 2 },
+    silver: { name: 'Silver Box', points: 5 },
+    gold: { name: 'Gold Box', points: 10 },
+  };
+  const alive1 = (g, i) => g.players[i].cards.filter(c => !c.revealed).length;
+  const ACHIEVEMENTS = {
+    untouched: { box: 'gold', title: 'Not a Scratch on You',
+      text: 'You won without losing a single card. The audience feels cheated. They tuned in to watch people die, and you just... didn\'t. Selfish.',
+      reward: 'A strongly worded complaint from the viewers.', game: (s, g, i) => g.winner === i && alive1(g, i) === 2 },
+    teflon: { box: 'gold', title: 'Professional Liar',
+      text: 'Three lies, zero consequences. Have you considered a career in politics? Or middle management? Same skill set, worse dental.',
+      reward: 'A fake mustache. You clearly don\'t need it.', game: (s, g, i) => g.winner === i && s.lies >= 3 && !s.caught },
+    boyscout: { box: 'silver', title: 'Honesty Is a Terminal Condition',
+      text: 'You won without telling a single lie. Statistically, this should have killed you. The System is reviewing the footage for cheating.',
+      reward: 'A merit badge, which The System has set on fire.', game: (s, g, i) => g.winner === i && !s.lies },
+    hunter: { box: 'silver', title: 'Trust Issues',
+      text: 'You called three bluffs correctly in one game. Your therapist would be proud. You don\'t have a therapist. They were all eaten on Floor Two.',
+      reward: 'A magnifying glass. Please stop squinting at people.', game: s => s.callsRight >= 3 },
+    thread: { box: 'bronze', title: 'Held Together With Spit and Spite',
+      text: 'You won with one card left. That isn\'t a victory. That\'s a near-death experience with a trophy.',
+      reward: 'One bandage. Used.', game: (s, g, i) => g.winner === i && alive1(g, i) === 1 },
+    paranoid: { box: 'bronze', title: 'Paranoid Little Gremlin',
+      text: 'You accused two honest crawlers of lying in one game. They were telling the truth. You were the problem all along.',
+      reward: 'A written apology you will never send.', game: s => s.callsWrong >= 2 },
+    onfire: { box: 'bronze', title: 'Pants Status: Fully Engulfed',
+      text: 'Caught lying three times in one game. The fire department has been notified. Your pants are a total loss.',
+      reward: 'A fire extinguisher, delivered three turns too late.', game: s => s.caught >= 3 },
+    snack: { box: 'bronze', title: 'All-You-Can-Eat Buffet',
+      text: 'Six gold chomped out of your pockets in one game. You aren\'t a contestant. You\'re a snack with a name tag.',
+      reward: 'A coin purse with a hole in it.', game: s => s.stolenFrom >= 6 },
+    opening: { box: 'bronze', title: 'Tutorial Boss',
+      text: 'First crawler out. The viewers didn\'t even have time to learn your name. Don\'t worry. They won\'t try.',
+      reward: 'A commemorative urn, one size fits all.', game: (s, g, i) => g.out[0] === i },
+    first: { box: 'bronze', title: 'Welcome, Crawler!',
+      text: 'You finished your first game. Most crawlers do finish. Just not alive.',
+      reward: 'A pamphlet: "So You Survived. Now What?"', career: r => r.games >= 1 },
+    firstwin: { box: 'silver', title: 'Last Crawler Standing (For Now)',
+      text: 'Your first win. Enjoy it. The System has already pencilled in your humiliating downfall for next season.',
+      reward: 'A cardboard crown. Wear it with pride, or at least with tape.', career: r => r.wins >= 1 },
+    regular: { box: 'silver', title: 'Frequent Flyer of Doom',
+      text: 'Ten games played. At this point the dungeon should start charging you rent.',
+      reward: 'A loyalty card. Ten more games and your next coffin is free.', career: r => r.games >= 10 },
+    boss: { box: 'gold', title: 'Floor Boss Material',
+      text: 'Ten wins. The other crawlers have started telling their children about you. As a warning.',
+      reward: 'A throne. The throne is a folding chair.', career: r => r.wins >= 10 },
+    social: { box: 'bronze', title: 'Collector of Future Corpses',
+      text: 'You have played with five different crawlers. Lovely friends. Shame about what keeps happening to them.',
+      reward: 'A pack of sympathy cards, pre-signed.', career: (r, friends) => friends >= 5 },
+  };
+  // Achievements seat i newly earns from a finished game, given their updated record, friend count and what they have.
+  const achievementsFor = (g, i, record, friends, have = {}) => Object.keys(ACHIEVEMENTS).filter(k => !have[k] &&
+    (ACHIEVEMENTS[k].game ? ACHIEVEMENTS[k].game(g.stats[i], g, i) : ACHIEVEMENTS[k].career(record, friends)));
+
   // Index of the single highest score above zero; ties give nobody the award.
   function top(stats, score) {
     const scores = stats.map(score), best = Math.max(...scores);
@@ -381,5 +437,5 @@
   // A game read back from disk: everything is plain data except the shuffler, which is reattached here.
   const revive = (g, rng = Math.random) => Object.assign(g, { rng });
 
-  Object.assign(exports, { revive, ROLES, ACTIONS, REACTIONS, BOT_NAMES, actionsFor, rolesFor, awards, newGame, act, view, waitingOn, autoMove, forfeit });
+  Object.assign(exports, { revive, ROLES, ACTIONS, REACTIONS, BOT_NAMES, ACHIEVEMENTS, BOXES, achievementsFor, actionsFor, rolesFor, awards, newGame, act, view, waitingOn, autoMove, forfeit });
 })(typeof module !== 'undefined' ? module.exports : (window.Game = {}));

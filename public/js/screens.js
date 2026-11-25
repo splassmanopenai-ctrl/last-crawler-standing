@@ -11,7 +11,7 @@ function hallOfFame() {
   const box = h('details', {}, h('summary', {}, 'Hall of fame'), list);
   box.addEventListener('toggle', () => box.open && post('leaders', {}).then(rows => fill(list,
     rows.length ? rows.map((r, i) => h('div', { className: 'rival' }, h('span', { className: 'note' }, `${i + 1}.`), h('span', { className: 'name' }, r.name),
-      h('span', { className: 'note' }, `${plural(r.wins, 'win')} in ${plural(r.games, 'game')}, ${plural(r.points, 'pt')}`)))
+      h('span', { className: 'note' }, `${plural(r.wins, 'win')} in ${plural(r.games, 'game')}, ${plural(r.points, 'pt')}, ${plural(r.ach, 'achievement')}`)))
       : h('p', { className: 'tag' }, 'Nobody has finished a game yet. Be the first.')), () => fill(list, h('p', { className: 'tag' }, 'Could not load the hall of fame.'))));
   return box;
 }
@@ -329,6 +329,23 @@ function renderGame() {
     g.phase === 'over' && btn('Leave room', leave, 'ghost'),
   );
   if (motion) polish(motion);
+  // My new achievements from the game that just ended: shown once, after the winner's moment.
+  const seen = `lcs-ach-${v.code}-${g.seq}`;
+  if (fresh && g.phase === 'over' && v.achieved.length && !sessionStorage.getItem(seen)) {
+    sessionStorage.setItem(seen, '1');
+    later(moving() ? 3200 : 0, () => achieveShow(v.achieved));
+  }
+}
+
+// Home screen: the achievements this player has, with dates, and how many are still out there.
+function trophyCase(have) {
+  const all = Object.keys(ACHIEVEMENTS), got = all.filter(k => have[k]).sort((a, b) => have[b] - have[a]);
+  return h('details', {}, h('summary', {}, `My achievements (${got.length} of ${all.length})`),
+    got.length ? got.map(k => h('div', { className: 'trophy' }, h('b', {}, ACHIEVEMENTS[k].title),
+      h('span', { className: 'note' }, ` ${BOXES[ACHIEVEMENTS[k].box].name}, ${new Date(have[k]).toLocaleDateString()}`),
+      h('p', { className: 'tag' }, ACHIEVEMENTS[k].text)))
+      : h('p', { className: 'tag' }, 'None yet. The System is watching. It is always watching.'),
+    got.length < all.length && h('p', { className: 'tag' }, `${all.length - got.length} more hidden. Keep crawling.`));
 }
 
 // The TV: the whole table for a room to watch, big. No seat, so no hidden cards and no buttons.

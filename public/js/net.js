@@ -102,6 +102,7 @@ async function refreshHome() {
   prefilled = true;
   const r = profile.record;
   fill(box, r && r.games > 0 && h('p', { className: 'tag' }, `Welcome back, ${profile.name}. ${plural(r.wins, 'win')} in ${plural(r.games, 'game')}. ${plural(profile.points, 'point')} banked.`),
+    trophyCase(profile.ach || {}),
     profile.invites.length > 0 && h('div', { className: 'panel' }, h('h2', {}, "You're invited"),
     profile.invites.map(i => btn(`Join ${i.from}'s room`, () => join(i.code), 'hot', `Room ${i.code}`))));
 }

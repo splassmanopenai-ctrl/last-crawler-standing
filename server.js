@@ -1,6 +1,6 @@
 // Relay server: serves the phone UI, holds every room's hidden state, sends each player only their own view.
 const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto');
-const { newGame, act, view, waitingOn, autoMove, forfeit, actionsFor, revive, REACTIONS, BOT_NAMES } = require('./public/game.js');
+const { newGame, act, view, waitingOn, autoMove, forfeit, actionsFor, revive, REACTIONS, BOT_NAMES, ACHIEVEMENTS, BOXES, achievementsFor } = require('./public/game.js');
 
 const PORT = process.env.PORT || 3000;
 const PASSCODE = process.env.PASSCODE || '';
@@ -49,8 +49,8 @@ const SIGN = (() => {
 const sign = d => crypto.createHmac('sha256', SIGN).update(d).digest('hex');
 const touch = id => { players[id].at = Date.now(); save(); }; // every change gets a timestamp, so the newest card wins
 function cardOf(id) {
-  const { name, key, known, record, points, at } = players[id];
-  const d = JSON.stringify({ id, name, key, known, record, points, at: at || 0 });
+  const { name, key, known, record, points, ach, at } = players[id];
+  const d = JSON.stringify({ id, name, key, known, record, points, ach, at: at || 0 });
   return { d, s: sign(d) };
 }
 // Take back any card that is genuine and newer than what this server holds.
@@ -93,10 +93,18 @@ const roomView = (room, i) => ({
   record: room.players[i].pid ? recordOf(room.players[i].pid) : null,
   points: room.players[i].pid ? players[room.players[i].pid].points || 0 : 0,
   // Everyone's player cards, for each phone to keep: shared in the lobby and after each game, when they change.
-  cards: room.game && room.game.phase !== 'over' ? null : [...new Set(room.players.map(p => p.pid).filter(Boolean))].map(cardOf),
+  // Friends of everyone here come along too, so each phone backs up the wider group, not only this table.
+  cards: room.game && room.game.phase !== 'over' ? null : cardsFor(room),
+  achieved: (room.game && room.game.achieved && room.game.achieved[i]) || [], // this seat's new achievements from the game just ended
   timer: room.timer || 0, variant: !!room.variant, left: room.deadline ? room.deadline - Date.now() : null, // ms left, so phone clocks need not agree
   away: awayList(room),
 });
+function cardsFor(room) {
+  const here = room.players.map(p => p.pid).filter(Boolean);
+  const ids = new Set(here);
+  for (const id of here) for (const f of Object.keys(players[id].known)) if (players[f]) ids.add(f);
+  return [...ids].slice(0, 40).map(cardOf); // shortcut: the room's own players come first, then friends up to 40
+}
 // Seats whose phone has been gone a while: the others may move for them, so one closed browser can't stall a game.
 const isAway = p => !p.bot && !p.kicked && !p.res && p.away && Date.now() - p.away > AWAY_MS;
 const awayList = room => room.players.map(isAway);
@@ -140,6 +148,16 @@ function record(room) {
     r.games++; if (g.winner === i) r.wins++;
     r.callsRight += g.stats[i].callsRight; r.lies += g.stats[i].lies;
     p.points = (p.points || 0) + pointsFor(g.winner === i, g.stats[i].callsRight);
+    // New achievements: each pays its box's points, and the room hears about it.
+    const got = achievementsFor(g, i, r, Object.keys(p.known).length, p.ach);
+    if (got.length) {
+      p.ach = p.ach || {}; g.achieved = g.achieved || {}; g.achieved[i] = got;
+      for (const k of got) {
+        p.ach[k] = Date.now();
+        p.points += BOXES[ACHIEVEMENTS[k].box].points;
+        g.log.push(`New Achievement! ${seat.name}: ${ACHIEVEMENTS[k].title}`);
+      }
+    }
     touch(seat.pid);
   });
 }
@@ -256,7 +274,7 @@ const api = {
   leaders() {
     return Object.values(players).filter(p => p.record && p.record.games > 0)
       .sort((a, b) => b.record.wins - a.record.wins || a.record.games - b.record.games).slice(0, 20)
-      .map(p => ({ name: p.name, wins: p.record.wins, games: p.record.games, points: p.points || 0 }));
+      .map(p => ({ name: p.name, wins: p.record.wins, games: p.record.games, points: p.points || 0, ach: Object.keys(p.ach || {}).length }));
   },
 
   // Host tool: a one-time link that moves a player's seat to another phone (theirs died, or they switched).
@@ -296,7 +314,7 @@ const api = {
       players[id] = { name, key: hash(secret).toString('hex'), known: {} };
       touch(id);
     } else if (name && name !== players[id].name) { players[id].name = name; touch(id); }
-    return { build: BUILD, known: true, id, secret, name: players[id].name, record: recordOf(id), points: players[id].points || 0, invites: openInvites(id), card: cardOf(id) };
+    return { build: BUILD, known: true, id, secret, name: players[id].name, record: recordOf(id), points: players[id].points || 0, ach: players[id].ach || {}, invites: openInvites(id), card: cardOf(id) };
   },
 
   // Invite someone you have played with before into the room you are sitting in.

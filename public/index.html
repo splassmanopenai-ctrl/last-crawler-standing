@@ -158,6 +158,15 @@
   .tvname { font:italic 800 30px var(--display); text-transform:uppercase; }
   .tvlog { display:flex; flex-direction:column; gap:4px; color:var(--dim); }
   .winner { font:italic 800 34px var(--display); text-transform:uppercase; }
+  /* New Achievement! The System's notice over everything, on parchment; the box colour runs down its edge. */
+  .achieve { position:fixed; inset:0; z-index:9; display:grid; place-items:center; padding:16px; background:rgba(0,0,0,.6); }
+  .achieve .notice { max-width:420px; background:var(--paper); color:var(--ink); border:3px solid var(--ink); border-left-width:14px; border-radius:4px;
+    box-shadow:6px 6px 0 var(--ink); padding:18px; display:flex; flex-direction:column; gap:10px; }
+  .achieve .box-bronze { border-left-color:#b0703a; } .achieve .box-silver { border-left-color:#a9b2bd; } .achieve .box-gold { border-left-color:var(--gold); }
+  .achieve .burst { font:italic 800 30px/1 var(--display); text-transform:uppercase; color:var(--blood); transform:rotate(-2deg); }
+  .achieve h2 { font:italic 800 22px/1.1 var(--display); text-transform:uppercase; }
+  .achieve .reward { color:var(--muted); }
+  .trophy { padding:6px 0; border-bottom:1px solid #ffffff22; }
   .confetti { position:fixed; inset:0; pointer-events:none; z-index:6; overflow:hidden; }
   .confetti span { position:absolute; top:-30px; width:10px; height:16px; border:2px solid var(--ink); }
   .confetti { display:none; }
