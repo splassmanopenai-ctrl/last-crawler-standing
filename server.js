@@ -279,7 +279,7 @@ const api = {
   leaders() {
     return Object.values(players).filter(p => p.record && p.record.games > 0)
       .sort((a, b) => b.record.wins - a.record.wins || a.record.games - b.record.games).slice(0, 20)
-      .map(p => ({ name: p.name, wins: p.record.wins, games: p.record.games, points: p.points || 0, ach: Object.keys(p.ach || {}).length }));
+      .map(p => ({ name: p.name, wins: p.record.wins, games: p.record.games, points: p.points || 0, ach: Object.keys(p.ach || {}).length, achieved: p.ach || {} }));
   },
 
   // Host tool: a one-time link that moves a player's seat to another phone (theirs died, or they switched).

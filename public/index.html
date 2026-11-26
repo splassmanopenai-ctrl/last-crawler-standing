@@ -166,7 +166,18 @@
   .achieve .burst { font:italic 800 30px/1 var(--display); text-transform:uppercase; color:var(--blood); transform:rotate(-2deg); }
   .achieve h2 { font:italic 800 22px/1.1 var(--display); text-transform:uppercase; }
   .achieve .reward { color:var(--muted); }
-  .trophy { padding:6px 0; border-bottom:1px solid #ffffff22; }
+  .trophy { padding:6px 0 6px 10px; border-bottom:1px solid #ffffff22; border-left:4px solid transparent; }
+  .trophy.box-bronze { border-left-color:#b0703a; } .trophy.box-silver { border-left-color:#a9b2bd; } .trophy.box-gold { border-left-color:var(--gold); } .trophy.box-legendary { border-left-color:#9b4dff; }
+  .trophy b { color:var(--chalk); }
+
+  /* Home: who this phone is, then play, then the Hall of Fame. Section titles are banner capitals, like the cards. */
+  .banner { font:italic 800 24px/1 var(--display); text-transform:uppercase; color:var(--gold); text-shadow:2px 2px 0 var(--ink); margin-top:10px; }
+  .profile { border:3px solid var(--ink); border-left:10px solid var(--gold); border-radius:4px; box-shadow:4px 4px 0 var(--ink); padding:12px; display:flex; flex-direction:column; gap:4px; background:#00000026; }
+  .profile .who { font:italic 800 34px/1 var(--display); text-transform:uppercase; color:var(--chalk); text-shadow:2px 2px 0 var(--ink); }
+  .hofrow { border-bottom:2px solid var(--ink); }
+  .hofrow summary { gap:8px; color:var(--chalk); font-size:16px; }
+  .hofrow .rank { font:italic 800 22px var(--display); color:var(--gold); width:1.6em; }
+  .hofrow .name { flex:1; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .confetti { position:fixed; inset:0; pointer-events:none; z-index:6; overflow:hidden; }
   .confetti span { position:absolute; top:-30px; width:10px; height:16px; border:2px solid var(--ink); }
   .confetti { display:none; }

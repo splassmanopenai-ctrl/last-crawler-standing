@@ -5,15 +5,26 @@ function kickBtn(i, name) {
   return b;
 }
 
-// Season leaderboard: everyone who has played on this server, loaded when opened.
+// Season leaderboard: everyone who has played on this server, by wins. Tap a crawler to see their achievements.
 function hallOfFame() {
-  const list = h('div', { className: 'group' }, h('p', { className: 'tag' }, 'Loading…'));
-  const box = h('details', {}, h('summary', {}, 'Hall of fame'), list);
-  box.addEventListener('toggle', () => box.open && post('leaders', {}).then(rows => fill(list,
-    rows.length ? rows.map((r, i) => h('div', { className: 'rival' }, h('span', { className: 'note' }, `${i + 1}.`), h('span', { className: 'name' }, r.name),
-      h('span', { className: 'note' }, `${plural(r.wins, 'win')} in ${plural(r.games, 'game')}, ${plural(r.points, 'pt')}, ${plural(r.ach, 'achievement')}`)))
-      : h('p', { className: 'tag' }, 'Nobody has finished a game yet. Be the first.')), () => fill(list, h('p', { className: 'tag' }, 'Could not load the hall of fame.'))));
-  return box;
+  const list = h('div', {}, h('p', { className: 'tag' }, 'Loading…'));
+  post('leaders', {}).then(rows => fill(list,
+    rows.length ? [h('p', { className: 'tag' }, 'Tap a crawler to see their achievements.'),
+      rows.map((r, i) => h('details', { className: 'hofrow' },
+        h('summary', {}, h('span', { className: 'rank' }, `${i + 1}`), h('span', { className: 'name' }, r.name),
+          h('span', { className: 'note' }, `${plural(r.wins, 'win')} / ${r.games}`), h('span', { className: 'note' }, `${r.points} pts`),
+          h('span', { className: 'note' }, `🏆 ${r.ach}`)),
+        trophies(r.achieved || {})))]
+      : h('p', { className: 'tag' }, 'Nobody has finished a game yet. Be the first.')), () => fill(list, h('p', { className: 'tag' }, 'Could not load the Hall of Fame.')));
+  return h('section', { className: 'group hof' }, h('h2', { className: 'banner' }, 'Hall of Fame'), list);
+}
+
+// The player this phone remembers: name, record, points, and their achievements.
+function profileBox(p) {
+  const r = p.record || { games: 0, wins: 0 };
+  return h('div', { className: 'profile' }, h('p', { className: 'tag' }, 'Welcome back,'), h('div', { className: 'who' }, p.name),
+    h('p', {}, `${plural(r.wins, 'win')} in ${plural(r.games, 'game')}. ${plural(p.points || 0, 'point')} banked.`),
+    trophyCase(p.ach || {}));
 }
 
 // How to play, built from the rules in game.js so it always matches the card set in use.
@@ -76,7 +87,7 @@ function renderJoin() {
   const room = new URLSearchParams(location.search).get('room') || '';
   const code = h('input', { id: 'code', placeholder: 'ABCDE', value: room, maxLength: 5, autocapitalize: 'characters', autocomplete: 'off' });
   code.setAttribute('aria-label', 'Room code');
-  const name = h('input', { id: 'name', maxLength: 16, autocomplete: 'nickname' });
+  const name = h('input', { id: 'name', maxLength: 16, autocomplete: 'nickname', value: localStorage.getItem('lcs-name') || '' });
   name.setAttribute('aria-label', 'Your crawler name');
   const pass = h('input', { id: 'pass', placeholder: 'Host passcode', type: 'password', autocomplete: 'off' });
   pass.setAttribute('aria-label', 'Host passcode');
@@ -85,19 +96,22 @@ function renderJoin() {
   const theirs = h('input', { placeholder: 'Paste player code', autocomplete: 'off' });
   theirs.setAttribute('aria-label', 'Player code from another phone');
   prefilled = false;
+  const saved = myCard();
   fill(app,
     fan(),
     h('h1', {}, 'Last Crawler Standing'),
     h('p', { className: 'tag' }, 'Lie. Loot. Backstab. The whole galaxy is watching.'),
+    h('div', { id: 'profile' }, saved && profileBox(saved)),
     h('div', { id: 'invites' }),
-    h('label', { className: 'group' }, h('h2', {}, 'Your crawler name'), name),
-    h('label', { className: 'group' }, h('h2', {}, 'Join with a room code'), code),
-    btn('Join room', () => code.value.trim() ? join(code.value) : toast('Enter the room code')),
-    h('div', { className: 'group' }, h('h2', {}, 'Or start your own'), btn('Host a new game', () => join('')),
-      btn('Practice against bots', () => join('', true), 'ghost', 'A quick game to learn the ropes'),
-      h('details', {}, h('summary', {}, 'My server needs a passcode'), pass)),
-    howToPlay(false),
+    h('section', { className: 'group' }, h('h2', { className: 'banner' }, 'Play'),
+      h('label', { className: 'group' }, h('h2', {}, 'Your crawler name'), name),
+      h('label', { className: 'group' }, h('h2', {}, 'Join with a room code'), code),
+      btn('Join room', () => code.value.trim() ? join(code.value) : toast('Enter the room code')),
+      h('div', { className: 'group' }, h('h2', {}, 'Or start your own'), btn('Host a new game', () => join('')),
+        btn('Practice against bots', () => join('', true), 'ghost', 'A quick game to learn the ropes'),
+        h('details', {}, h('summary', {}, 'My server needs a passcode'), pass))),
     hallOfFame(),
+    howToPlay(false),
     h('details', {}, h('summary', {}, 'Switching phones?'),
       me && h('p', {}, 'This phone is your player. To move it, copy this code to the other phone. Keep it private.'), me && mine,
       h('p', {}, 'Have a code from your other phone?'), theirs, btn('Use this code', () => usePlayerCode(theirs.value), 'ghost')),
@@ -337,16 +351,17 @@ function renderGame() {
   }
 }
 
-// Home screen: the achievements this player has, with dates, and how many are still out there.
-function trophyCase(have) {
+// Achievements earned, newest first, each with its box and date. Used for you and for the Hall of Fame.
+function trophies(have) {
   const all = Object.keys(ACHIEVEMENTS), got = all.filter(k => have[k]).sort((a, b) => have[b] - have[a]);
-  return h('details', {}, h('summary', {}, `My achievements (${got.length} of ${all.length})`),
-    got.length ? got.map(k => h('div', { className: 'trophy' }, h('b', {}, ACHIEVEMENTS[k].title),
+  return h('div', { className: 'trophies' },
+    got.length ? got.map(k => h('div', { className: `trophy box-${ACHIEVEMENTS[k].box}` }, h('b', {}, ACHIEVEMENTS[k].title),
       h('span', { className: 'note' }, ` ${BOXES[ACHIEVEMENTS[k].box].name}, ${new Date(have[k]).toLocaleDateString()}`),
-      h('p', { className: 'tag' }, ACHIEVEMENTS[k].text)))
+      h('p', { className: 'tag' }, ACHIEVEMENTS[k].text), h('p', { className: 'tag' }, `Reward: ${ACHIEVEMENTS[k].reward}`)))
       : h('p', { className: 'tag' }, 'None yet. The System is watching. It is always watching.'),
     got.length < all.length && h('p', { className: 'tag' }, `${all.length - got.length} more hidden. Keep crawling.`));
 }
+const trophyCase = have => h('details', {}, h('summary', {}, `My achievements (${Object.keys(have).filter(k => ACHIEVEMENTS[k]).length} of ${Object.keys(ACHIEVEMENTS).length})`), trophies(have));
 
 // The TV: the whole table for a room to watch, big. No seat, so no hidden cards and no buttons.
 function renderTV() {
