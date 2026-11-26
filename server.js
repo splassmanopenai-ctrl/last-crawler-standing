@@ -1,6 +1,6 @@
 // Relay server: serves the phone UI, holds every room's hidden state, sends each player only their own view.
 const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto');
-const { newGame, act, view, waitingOn, autoMove, forfeit, actionsFor, revive, REACTIONS, BOT_NAMES, ACHIEVEMENTS, BOXES, achievementsFor } = require('./public/game.js');
+const { newGame, act, view, waitingOn, autoMove, forfeit, actionsFor, revive, REACTIONS, BOT_NAMES, ACHIEVEMENTS, BOXES, achievementsFor, tally } = require('./public/game.js');
 
 const PORT = process.env.PORT || 3000;
 const PASSCODE = process.env.PASSCODE || '';
@@ -147,9 +147,14 @@ function record(room) {
     const r = p.record || (p.record = { games: 0, wins: 0, callsRight: 0, lies: 0 });
     r.games++; if (g.winner === i) r.wins++;
     r.callsRight += g.stats[i].callsRight; r.lies += g.stats[i].lies;
+    // Career totals of every stat, and runs of wins and losses, for the career achievements.
+    r.t = r.t || {};
+    for (const [k, n] of Object.entries(tally(g, i))) if (typeof n === 'number') r.t[k] = (r.t[k] || 0) + n;
+    r.streak = g.winner === i ? (r.streak || 0) + 1 : 0;
+    r.cold = g.winner === i ? 0 : (r.cold || 0) + 1;
     p.points = (p.points || 0) + pointsFor(g.winner === i, g.stats[i].callsRight);
     // New achievements: each pays its box's points, and the room hears about it.
-    const got = achievementsFor(g, i, r, Object.keys(p.known).length, p.ach);
+    const got = achievementsFor(g, i, r, Object.keys(p.known).length, p.ach, p.points);
     if (got.length) {
       p.ach = p.ach || {}; g.achieved = g.achieved || {}; g.achieved[i] = got;
       for (const k of got) {

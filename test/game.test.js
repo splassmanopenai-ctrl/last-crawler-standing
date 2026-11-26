@@ -215,3 +215,33 @@ test('a game saved to JSON at any point can be restored and played to the end', 
     }
   }
 });
+
+test('every achievement is complete, and checking them after random games never throws', () => {
+  const { ACHIEVEMENTS, BOXES, achievementsFor, tally } = require('../public/game.js');
+  const all = Object.values(ACHIEVEMENTS);
+  assert.ok(all.length >= 114);
+  for (const a of all) assert.ok(BOXES[a.box] && a.title && a.text && a.reward && typeof a.when === 'function', a.title);
+  assert.strictEqual(new Set(all.map(a => a.title)).size, all.length, 'titles are unique');
+  let seen = new Set();
+  for (let seed = 0; seed < 40; seed++) {
+    let r = seed + 1; const rng = () => (r = (r * 16807) % 2147483647) / 2147483647;
+    const g = newGame(['A', 'B', 'C', 'D'].slice(0, 2 + seed % 3), rng, seed % 2 === 1);
+    // Everyone plays randomly-ish via the dullest moves and occasional claims, until someone wins.
+    for (let i = 0; i < 500 && g.phase !== 'over'; i++) {
+      const id = waitingOn(g)[0], p = g.players[id];
+      if (g.phase === 'turn' && rng() < .5) {
+        const acts = Object.entries(actionsFor(g.variant)).filter(([, a]) => p.coins >= (a.cost || 0) && (p.coins < 10 || a === actionsFor(g.variant).coup));
+        const [k] = acts[Math.floor(rng() * acts.length)], t = g.players.find(x => x.id !== id && x.cards.some(c => !c.revealed));
+        if (!act(g, id, { type: 'action', action: k, target: t.id })) continue;
+      }
+      if ((g.phase === 'react' || g.phase === 'blockReact') && rng() < .2 && !act(g, id, { type: 'challenge' })) continue;
+      autoMove(g, id);
+    }
+    assert.strictEqual(g.phase, 'over');
+    g.players.forEach((_, i) => {
+      const t = tally(g, i);
+      for (const k of achievementsFor(g, i, { games: 1, wins: +!!t.won, t, streak: t.won, cold: 1 - t.won }, 1)) seen.add(k);
+    });
+  }
+  assert.ok(seen.size >= 10, `random games earn a spread of achievements (${seen.size})`);
+});
