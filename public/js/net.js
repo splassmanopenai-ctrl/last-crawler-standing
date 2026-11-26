@@ -124,13 +124,14 @@ async function refreshHome() {
   if (!me) { await syncSoon(); return fillHall(); } // no player yet, but the Hall of Fame still syncs
   try { await hello(); } catch { return; }
   fillHall();
-  const box = document.getElementById('invites'), name = document.getElementById('name');
-  if (!box || !profile) return;
-  if (!prefilled && !name.value) name.value = profile.name;
+  if (!profile) return;
+  // Fill in whichever home page is showing, without redrawing anything someone is typing in.
+  const el = id => document.getElementById(id), name = el('name'), box = el('invites');
+  if (name && !prefilled && !name.value) name.value = profile.name;
   prefilled = true;
-  const card = document.getElementById('profile');
-  if (card) fill(card, profileBox(profile));
-  fill(box, profile.invites.length > 0 && h('div', { className: 'panel' }, h('h2', {}, "You're invited"),
+  if (el('profile')) fill(el('profile'), profileBox(profile));
+  if (el('mine')) fill(el('mine'), myPage(profile));
+  if (box) fill(box, profile.invites.length > 0 && h('div', { className: 'panel' }, h('h2', {}, "You're invited"),
     profile.invites.map(i => btn(`Join ${i.from}'s room`, () => join(i.code), 'hot', `Room ${i.code}`))));
 }
 setInterval(refreshHome, 5000);

@@ -7,13 +7,12 @@ function kickBtn(i, name) {
 
 // Season leaderboard, by wins, built from the player cards this phone holds (every phone holds them all).
 // Tap a crawler to see their achievements.
-const hallOfFame = () => h('section', { className: 'group hof' }, h('h2', { className: 'banner' }, 'Hall of Fame'), h('div', { id: 'hof' }, hallRows()));
+const hallOfFame = () => h('section', { className: 'group hof' }, h('div', { id: 'hof' }, hallRows()));
 function hallRows() {
   const rows = players().filter(p => p.record && p.record.games > 0)
     .sort((a, b) => b.record.wins - a.record.wins || a.record.games - b.record.games).slice(0, 20);
   if (!rows.length) return h('p', { className: 'tag' }, 'Nobody has finished a game yet. Be the first.');
-  return [h('p', { className: 'tag' }, 'Tap a crawler to see their achievements.'),
-    rows.map((p, i) => h('details', { className: 'hofrow' },
+  return [rows.map((p, i) => h('details', { className: 'hofrow' },
       h('summary', {}, h('span', { className: 'rank' }, `${i + 1}`), h('span', { className: 'name' }, p.name),
         h('span', { className: 'note' }, `${plural(p.record.wins, 'win')} / ${p.record.games}`), h('span', { className: 'note' }, `${p.points || 0} pts`),
         h('span', { className: 'note' }, `🏆 ${Object.keys(p.ach || {}).length}`)),
@@ -27,16 +26,35 @@ function fillHall() {
 
 // The player this phone remembers: name, record, points, and their achievements.
 function profileBox(p) {
-  const r = p.record || { games: 0, wins: 0 };
+  const r = p.record || { games: 0, wins: 0 }, n = Object.keys(p.ach || {}).filter(k => ACHIEVEMENTS[k]).length;
   return h('div', { className: 'profile' }, h('p', { className: 'tag' }, 'Welcome back,'), h('div', { className: 'who' }, p.name),
     h('p', {}, `${plural(r.wins, 'win')} in ${plural(r.games, 'game')}. ${plural(p.points || 0, 'point')} banked.`),
-    trophyCase(p.ach || {}));
+    btn(`My achievements: ${n} of ${Object.keys(ACHIEVEMENTS).length}`, () => goto('me'), 'ghost'));
+}
+
+// The home screen is split into pages, so the front page is only "who am I" and "let's play". The others live at
+// #hof, #help and #me, so the phone's back button moves between them.
+const page = () => location.hash.slice(1);
+let fromHome = false; // opened from the home page, so Back can simply go back
+function goto(p) { fromHome = !!p; location.hash = p; }
+function back() {
+  if (fromHome) { fromHome = false; history.back(); return; }
+  history.replaceState(null, '', location.pathname + location.search); render(); // opened from a link: go home
+}
+function subpage(title, ...kids) {
+  fill(app, h('div', { className: 'bar' }, btn('‹ Back', back, 'ghost mini')), h('h1', {}, title), ...kids);
+  scrollTo(0, 0);
 }
 
 // How to play, built from the rules in game.js so it always matches the card set in use.
 function howToPlay(variant, open = false) {
+  const box = h('details', { className: 'howto' }, h('summary', {}, 'How to play'), rules(variant));
+  box.open = open;
+  return box;
+}
+function rules(variant) {
   const A = actionsFor(variant), names = rs => rs.map(r => ROLES[r].name).join(' or ');
-  const box = h('details', { className: 'howto' }, h('summary', {}, 'How to play'),
+  return [
     h('h2', {}, 'The goal'),
     h('p', {}, 'Everyone starts with 2 hidden cards and 2 gold. Lose both cards and you are out. The last crawler with a card left wins.'),
     h('h2', {}, 'Your turn'),
@@ -48,9 +66,7 @@ function howToPlay(variant, open = false) {
     h('p', {}, 'When someone claims a character, anyone may call the bluff. If they lied, they lose a card. If they told the truth, the caller loses a card, and the claimant swaps the proven card for a fresh one.'),
     h('p', {}, 'Blocks are claims too, so a block can be called out the same way.'),
     h('h2', {}, 'The cast'),
-    rolesFor(variant).map(k => h('p', {}, chip(k), ` ${ROLES[k].title}. ${ROLES[k].text}`)));
-  box.open = open;
-  return box;
+    rolesFor(variant).map(k => h('p', {}, chip(k), ` ${ROLES[k].title}. ${ROLES[k].text}`))];
 }
 
 // A rival's row at the table: name, cards (backs unless you may see them), gold. Used by the game and the TV.
@@ -103,7 +119,13 @@ function renderJoin() {
   theirs.setAttribute('aria-label', 'Player code from another phone');
   prefilled = false;
   const saved = myCard();
-  fill(app,
+  if (page() === 'hof') subpage('Hall of Fame', h('p', { className: 'tag' }, 'The top 20 crawlers by wins. Tap one to see their achievements.'), hallOfFame());
+  else if (page() === 'help') subpage('How to play', help());
+  else if (page() === 'me') subpage('My crawler', h('div', { id: 'mine' }, myPage(profile || saved)),
+    h('section', { className: 'group' }, h('h2', { className: 'banner' }, 'Switching phones'),
+      me && h('p', {}, 'This phone is your player. To move it, copy this code to the other phone. Keep it private.'), me && mine,
+      h('p', {}, 'Have a code from your other phone?'), theirs, btn('Use this code', () => usePlayerCode(theirs.value), 'ghost')));
+  else fill(app,
     fan(),
     h('h1', {}, 'Last Crawler Standing'),
     h('p', { className: 'tag' }, 'Lie. Loot. Backstab. The whole galaxy is watching.'),
@@ -115,14 +137,36 @@ function renderJoin() {
       btn('Join room', () => code.value.trim() ? join(code.value) : toast('Enter the room code')),
       h('div', { className: 'group' }, h('h2', {}, 'Or start your own'), btn('Host a new game', () => join('')),
         btn('Practice against bots', () => join('', true), 'ghost', 'A quick game to learn the ropes'),
-        h('details', {}, h('summary', {}, 'My server needs a passcode'), pass))),
-    hallOfFame(),
-    howToPlay(false),
-    h('details', {}, h('summary', {}, 'Switching phones?'),
-      me && h('p', {}, 'This phone is your player. To move it, copy this code to the other phone. Keep it private.'), me && mine,
-      h('p', {}, 'Have a code from your other phone?'), theirs, btn('Use this code', () => usePlayerCode(theirs.value), 'ghost')),
+        h('details', {}, h('summary', {}, 'My server needs a passcode'), h('p', {}, 'Only for hosting. Joining a room never needs it.'), pass))),
+    h('nav', { className: 'grid' }, btn('Hall of Fame', () => goto('hof'), 'ghost', 'Leaderboard'), btn('How to play', () => goto('help'), 'ghost', 'Rules and tips')),
+    !me && btn('Have a player code from another phone?', () => goto('me'), 'ghost mini'),
   );
   refreshHome();
+}
+
+// My crawler: record, points and every achievement earned, newest first.
+function myPage(p) {
+  if (!p) return h('p', { className: 'tag' }, 'Enter a name on the home screen and play a game to become a saved player.');
+  const r = p.record || { games: 0, wins: 0 };
+  return [h('div', { className: 'profile' }, h('div', { className: 'who' }, p.name),
+    h('p', {}, `${plural(r.wins, 'win')} in ${plural(r.games, 'game')}. ${plural(p.points || 0, 'point')} banked.`)),
+  h('h2', { className: 'banner' }, `Achievements: ${Object.keys(p.ach || {}).filter(k => ACHIEVEMENTS[k]).length} of ${Object.keys(ACHIEVEMENTS).length}`),
+  trophies(p.ach || {})];
+}
+
+// The help page: the rules, then the things people actually ask about.
+function help() {
+  return [rules(false),
+    h('h2', {}, `The ${ROLES.paparazzo.name} card set`),
+    h('p', {}, `Hosts can swap ${ROLES.changeling.name} for ${ROLES.paparazzo.name}. ${ROLES.paparazzo.text}`),
+    h('h2', { className: 'banner' }, 'Hosting'),
+    h('p', {}, 'Tap Host a new game and share the room code, invite link or QR code. Up to 6 crawlers. The host can set a move timer and the card set, and remove players with ✕.'),
+    h('p', {}, 'Host passcode: some servers ask for one before you can host. Joining never needs it.'),
+    h('p', {}, 'TV view: in the lobby, open Show it on a TV to put the table on a big screen. It never shows hidden cards.'),
+    h('p', {}, "A dead phone: the host's Host tools make a seat link for the new phone. Anyone whose phone has been gone 2 minutes can be skipped."),
+    h('h2', { className: 'banner' }, 'Points and achievements'),
+    h('p', {}, `Every game pays points: 1 for playing, 3 more for winning, 1 per bluff you call correctly. The System also hands out ${Object.keys(ACHIEVEMENTS).length} achievements, each with a box of points: Bronze 2, Silver 5, Gold 10, Legendary 25. Practice games don't count.`),
+    h('p', {}, 'Your record and achievements are saved on your phone and on the server, and every phone keeps a copy of everyone else\'s, so nothing is lost if the server restarts.')];
 }
 
 // Host's game settings: in the lobby, and again between games. Everyone else sees a summary.
@@ -367,7 +411,7 @@ function trophies(have) {
       : h('p', { className: 'tag' }, 'None yet. The System is watching. It is always watching.'),
     got.length < all.length && h('p', { className: 'tag' }, `${all.length - got.length} more hidden. Keep crawling.`));
 }
-const trophyCase = have => h('details', {}, h('summary', {}, `My achievements (${Object.keys(have).filter(k => ACHIEVEMENTS[k]).length} of ${Object.keys(ACHIEVEMENTS).length})`), trophies(have));
+
 
 // The TV: the whole table for a room to watch, big. No seat, so no hidden cards and no buttons.
 function renderTV() {
