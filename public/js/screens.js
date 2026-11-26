@@ -5,18 +5,24 @@ function kickBtn(i, name) {
   return b;
 }
 
-// Season leaderboard: everyone who has played on this server, by wins. Tap a crawler to see their achievements.
-function hallOfFame() {
-  const list = h('div', {}, h('p', { className: 'tag' }, 'Loading…'));
-  post('leaders', {}).then(rows => fill(list,
-    rows.length ? [h('p', { className: 'tag' }, 'Tap a crawler to see their achievements.'),
-      rows.map((r, i) => h('details', { className: 'hofrow' },
-        h('summary', {}, h('span', { className: 'rank' }, `${i + 1}`), h('span', { className: 'name' }, r.name),
-          h('span', { className: 'note' }, `${plural(r.wins, 'win')} / ${r.games}`), h('span', { className: 'note' }, `${r.points} pts`),
-          h('span', { className: 'note' }, `🏆 ${r.ach}`)),
-        trophies(r.achieved || {})))]
-      : h('p', { className: 'tag' }, 'Nobody has finished a game yet. Be the first.')), () => fill(list, h('p', { className: 'tag' }, 'Could not load the Hall of Fame.')));
-  return h('section', { className: 'group hof' }, h('h2', { className: 'banner' }, 'Hall of Fame'), list);
+// Season leaderboard, by wins, built from the player cards this phone holds (every phone holds them all).
+// Tap a crawler to see their achievements.
+const hallOfFame = () => h('section', { className: 'group hof' }, h('h2', { className: 'banner' }, 'Hall of Fame'), h('div', { id: 'hof' }, hallRows()));
+function hallRows() {
+  const rows = players().filter(p => p.record && p.record.games > 0)
+    .sort((a, b) => b.record.wins - a.record.wins || a.record.games - b.record.games).slice(0, 20);
+  if (!rows.length) return h('p', { className: 'tag' }, 'Nobody has finished a game yet. Be the first.');
+  return [h('p', { className: 'tag' }, 'Tap a crawler to see their achievements.'),
+    rows.map((p, i) => h('details', { className: 'hofrow' },
+      h('summary', {}, h('span', { className: 'rank' }, `${i + 1}`), h('span', { className: 'name' }, p.name),
+        h('span', { className: 'note' }, `${plural(p.record.wins, 'win')} / ${p.record.games}`), h('span', { className: 'note' }, `${p.points || 0} pts`),
+        h('span', { className: 'note' }, `🏆 ${Object.keys(p.ach || {}).length}`)),
+      trophies(p.ach || {})))];
+}
+// Refill the Hall of Fame after a sync, leaving any row someone has open alone.
+function fillHall() {
+  const box = document.getElementById('hof');
+  if (box && !box.querySelector('details[open]')) fill(box, hallRows());
 }
 
 // The player this phone remembers: name, record, points, and their achievements.

@@ -13,8 +13,9 @@ let handoff = null; // host tools: the seat link being shown
 // TV view (?tv=CODE): a shared screen that watches a room from no seat.
 const tv = (new URLSearchParams(location.search).get('tv') || '').toUpperCase() || null;
 
-// Player cards: signed copies of the saved players this phone has played with (and its own). If the server forgets
-// its players, every phone hands these back on its next visit and the records come back. Newest copy wins.
+// Player cards: signed copies of every saved player (records, points, achievements, who they know). Every visit swaps
+// cards with the server both ways, newest copy winning, so each phone holds the whole group and the Hall of Fame.
+// If the server forgets its players, the next phone to visit hands them back.
 const CARDS = 'lcs-cards';
 function keepCards(list) {
   if (!list) return;
@@ -24,16 +25,26 @@ function keepCards(list) {
     const d = JSON.parse(c.d), had = all[d.id];
     if (!had || JSON.parse(had.d).at < d.at) all[d.id] = c;
   }
-  // shortcut: keep the 100 most recently updated, plenty for a friends group
-  const top = Object.entries(all).sort((a, b) => JSON.parse(b[1].d).at - JSON.parse(a[1].d).at).slice(0, 100);
-  try { localStorage.setItem(CARDS, JSON.stringify(Object.fromEntries(top))); } catch { /* storage full: the server still has them */ }
+  try { localStorage.setItem(CARDS, JSON.stringify(all)); } catch { /* storage full: the server still has them */ }
 }
+const players = () => myCards().map(c => JSON.parse(c.d));
+// Swap cards with the server: get everything it has newer, then send what it asked for.
+async function sync() {
+  const have = Object.fromEntries(players().map(p => [p.id, p.at]));
+  const r = await post('sync', { have });
+  keepCards(r.cards);
+  if (r.want.length) await post('sync', { have, cards: myCards().filter(c => r.want.includes(JSON.parse(c.d).id)) });
+}
+let syncing = null;
+const syncSoon = () => syncing || (syncing = sync().catch(() => {}).finally(() => { syncing = null; }));
 // This phone's own saved player, from its card: name, record, points and achievements, shown before the server answers.
 function myCard() {
   const c = me && myCards().find(c => JSON.parse(c.d).id === me.id);
   return c ? JSON.parse(c.d) : null;
 }
 const myCards = () => { try { return Object.values(JSON.parse(localStorage.getItem(CARDS) || '{}')); } catch { return []; } };
+const SEAL = 'lcs-seal'; // the server's encrypted copy of the room this phone sits in; only the server can read it
+let restoring = false;
 let build = null; // the server version this page was loaded from
 // The server restarted with newer code than this page: reload to pick it up. Sessions are in localStorage, so it's seamless.
 function stale(b) {
@@ -68,18 +79,27 @@ function connect() {
   es.onmessage = e => {
     const next = JSON.parse(e.data);
     if (stale(next.build)) return;
-    keepCards(next.cards);
+    if (next.seal) localStorage.setItem(SEAL, next.seal);
+    // Someone joined, or a game just ended: their newer player cards are worth fetching.
+    if (!v || String(v.names) !== String(next.names) || (next.game && next.game.phase === 'over' && !(v.game && v.game.phase === 'over'))) syncSoon();
+    restoring = false;
     prev = v && v.game; v = next; deadlineAt = v.left == null ? null : Date.now() + v.left; fresh = true; render(); fresh = false; };
   // The server says "gone" when the room no longer exists. Plain errors are not trusted for this:
   // a page reload also fires one. Dropped connections retry on their own.
-  // Rooms only vanish when the server restarts, which may bring new code, so reload rather than just leave.
-  es.addEventListener('gone', () => { if (tv) { es.close(); v = null; render(); return; } leave(); location.reload(); });
+  // Rooms vanish when the server restarts without its disk: first offer it this phone's sealed copy of the room.
+  // If that doesn't bring the seat back, leave (and reload, since a restart may bring new code).
+  es.addEventListener('gone', () => {
+    if (tv) { es.close(); v = null; render(); return; }
+    const copy = localStorage.getItem(SEAL);
+    if (copy && !restoring) { restoring = true; es.close(); post('restore', { seal: copy }).then(connect, () => { leave(); location.reload(); }); return; }
+    leave(); location.reload();
+  });
   es.addEventListener('react', e => heckle(JSON.parse(e.data)));
 }
 
 function leave() {
   if (es) es.close();
-  localStorage.removeItem(KEY);
+  localStorage.removeItem(KEY); localStorage.removeItem(SEAL);
   session = v = es = null;
   render();
 }
@@ -89,9 +109,9 @@ const ME = 'lcs-player';
 let me = JSON.parse(localStorage.getItem(ME) || 'null'), profile = null, prefilled = false;
 
 async function hello(name) {
-  const r = await post('hello', { player: me, name, cards: myCards() });
+  await syncSoon(); // first, so a server that forgot this player gets their card back before we ask who we are
+  const r = await post('hello', { player: me, name });
   if (stale(r.build)) return;
-  keepCards(r.card && [r.card]);
   if (r.name) localStorage.setItem('lcs-name', r.name); // the name field is filled in on every visit
   if (!r.known) { me = profile = null; localStorage.removeItem(ME); return; }
   if (r.secret) { me = { id: r.id, secret: r.secret }; localStorage.setItem(ME, JSON.stringify(me)); }
@@ -100,8 +120,10 @@ async function hello(name) {
 
 // Home screen only: fetch my saved name and any invites, without re-rendering the form being typed in.
 async function refreshHome() {
-  if (session || !me || document.hidden) return;
+  if (session || document.hidden) return;
+  if (!me) { await syncSoon(); return fillHall(); } // no player yet, but the Hall of Fame still syncs
   try { await hello(); } catch { return; }
+  fillHall();
   const box = document.getElementById('invites'), name = document.getElementById('name');
   if (!box || !profile) return;
   if (!prefilled && !name.value) name.value = profile.name;

@@ -33,8 +33,9 @@ function save() {
 const hash = s => crypto.createHash('sha256').update(String(s)).digest();
 const cleanName = name => String(name || '').trim().slice(0, 16);
 
-// Player cards: each player's saved state, signed by the server and copied onto the phones of everyone they play
-// with. If this server forgets (a wiped disk, a fresh deploy), the next phone to visit hands the cards back.
+// Player cards: each player's saved state, signed by the server and copied onto every phone that visits. Phones and
+// server swap whatever the other has older (see `sync`), so if this server forgets (a wiped disk, a fresh deploy),
+// the next phone to visit hands the cards back. shortcut: every phone holds every card, fine for a friends group.
 // The signing key must outlive the disk for that to work: set STATS_KEY, or it is kept next to players.json.
 // Servers sharing one STATS_KEY can also share players. shortcut: newest card wins whole; two servers updating the
 // same player at once keep only the later change, fine while friends play on one server at a time.
@@ -56,7 +57,7 @@ function cardOf(id) {
 // Take back any card that is genuine and newer than what this server holds.
 function absorb(cards) {
   if (!Array.isArray(cards)) return;
-  for (const c of cards.slice(0, 100)) {
+  for (const c of cards.slice(0, 500)) {
     if (!c || typeof c.d !== 'string' || typeof c.s !== 'string' || c.s.length !== 64) continue;
     if (!crypto.timingSafeEqual(Buffer.from(sign(c.d)), Buffer.from(c.s))) continue;
     const { id, ...p } = JSON.parse(c.d);
@@ -65,6 +66,20 @@ function absorb(cards) {
 }
 // Points earned outside any one game, banked for badges and perks later.
 const pointsFor = (won, callsRight) => 1 + (won ? 3 : 0) + callsRight;
+
+// Sealed rooms: each phone in a room also keeps an encrypted copy of it, so a game survives a server that forgot it.
+// Encrypted (not just signed) because a room holds everyone's hidden cards and seat tokens. Same key as the cards.
+const ROOM_KEY = crypto.createHash('sha256').update('room:' + SIGN).digest();
+function seal(data) {
+  const iv = crypto.randomBytes(12), c = crypto.createCipheriv('aes-256-gcm', ROOM_KEY, iv);
+  const body = Buffer.concat([c.update(JSON.stringify(data)), c.final()]);
+  return Buffer.concat([iv, c.getAuthTag(), body]).toString('base64');
+}
+function unseal(text) {
+  const b = Buffer.from(String(text), 'base64'), d = crypto.createDecipheriv('aes-256-gcm', ROOM_KEY, b.subarray(0, 12));
+  d.setAuthTag(b.subarray(12, 28));
+  return JSON.parse(Buffer.concat([d.update(b.subarray(28)), d.final()]).toString()); // throws if tampered with
+}
 
 // A phone proves who it is with the id and secret it was given on first visit.
 function auth(player) {
@@ -93,18 +108,11 @@ const roomView = (room, i) => ({
   record: room.players[i].pid ? recordOf(room.players[i].pid) : null,
   points: room.players[i].pid ? players[room.players[i].pid].points || 0 : 0,
   // Everyone's player cards, for each phone to keep: shared in the lobby and after each game, when they change.
-  // Friends of everyone here come along too, so each phone backs up the wider group, not only this table.
-  cards: room.game && room.game.phase !== 'over' ? null : cardsFor(room),
+  seal: room.sealed || (room.sealed = seal(roomData(room))), // this phone's encrypted backup of the room
   achieved: (room.game && room.game.achieved && room.game.achieved[i]) || [], // this seat's new achievements from the game just ended
   timer: room.timer || 0, variant: !!room.variant, left: room.deadline ? room.deadline - Date.now() : null, // ms left, so phone clocks need not agree
   away: awayList(room),
 });
-function cardsFor(room) {
-  const here = room.players.map(p => p.pid).filter(Boolean);
-  const ids = new Set(here);
-  for (const id of here) for (const f of Object.keys(players[id].known)) if (players[f]) ids.add(f);
-  return [...ids].slice(0, 40).map(cardOf); // shortcut: the room's own players come first, then friends up to 40
-}
 // Seats whose phone has been gone a while: the others may move for them, so one closed browser can't stall a game.
 const isAway = p => !p.bot && !p.kicked && !p.res && p.away && Date.now() - p.away > AWAY_MS;
 const awayList = room => room.players.map(isAway);
@@ -172,14 +180,19 @@ const recordOf = id => players[id].record || { games: 0, wins: 0, callsRight: 0,
 // mid-write never leaves half a file. shortcut: rewrites every room on each change; fine for a friends-sized server.
 const ROOMS = path.join(path.dirname(DATA), 'rooms.json');
 let savingRooms;
+const roomData = r => ({
+  code: r.code, practice: r.practice, timer: r.timer, variant: r.variant, touched: r.touched, ready: [...r.ready],
+  players: r.players.map(({ name, token, pid, bot, kicked }) => ({ name, token, pid, bot, kicked })),
+  // plain data; the shuffler function is left out by JSON and reattached on load. Phones only ever show the last 40
+  // log lines, so older ones are dropped to keep every phone's sealed copy small.
+  game: r.game && { ...r.game, log: r.game.log.slice(-60) },
+});
+// A room read back from disk or from a phone's sealed copy.
+const roomFrom = r => ({ ...r, ready: new Set(r.ready), players: r.players.map(p => ({ ...p, res: null, away: Date.now() })), game: r.game && revive(r.game) });
 function saveRooms() {
   clearTimeout(savingRooms);
   savingRooms = setTimeout(() => {
-    const data = [...rooms.values()].map(r => ({
-      code: r.code, practice: r.practice, timer: r.timer, variant: r.variant, touched: r.touched, ready: [...r.ready],
-      players: r.players.map(({ name, token, pid, bot, kicked }) => ({ name, token, pid, bot, kicked })),
-      game: r.game, // plain data; the shuffler function is left out by JSON and reattached on load
-    }));
+    const data = [...rooms.values()].map(roomData);
     try {
       fs.mkdirSync(path.dirname(ROOMS), { recursive: true });
       fs.writeFileSync(ROOMS + '.tmp', JSON.stringify(data));
@@ -189,13 +202,14 @@ function saveRooms() {
 }
 try {
   for (const r of JSON.parse(fs.readFileSync(ROOMS, 'utf8'))) {
-    rooms.set(r.code, { ...r, ready: new Set(r.ready), players: r.players.map(p => ({ ...p, res: null, away: Date.now() })), game: r.game && revive(r.game) });
+    rooms.set(r.code, roomFrom(r));
   }
 } catch { /* first run, or no rooms */ }
 
 function push(room) {
   record(room);
   room.touched = Date.now();
+  room.sealed = seal(roomData(room)); room.restored = false;
   room.players.forEach((p, i) => p.res && p.res.write(`data: ${JSON.stringify(roomView(room, i))}\n\n`));
   if (room.tvs && room.tvs.size) { const msg = `data: ${JSON.stringify(tvView(room))}\n\n`; room.tvs.forEach(r => r.write(msg)); }
   room.awaySeen = awayList(room).join();
@@ -275,11 +289,32 @@ function nudgeBots(room) {
 }
 
 const api = {
-  // Season leaderboard: everyone who has played on this server, by wins.
-  leaders() {
-    return Object.values(players).filter(p => p.record && p.record.games > 0)
-      .sort((a, b) => b.record.wins - a.record.wins || a.record.games - b.record.games).slice(0, 20)
-      .map(p => ({ name: p.name, wins: p.record.wins, games: p.record.games, points: p.points || 0, ach: Object.keys(p.ach || {}).length, achieved: p.ach || {} }));
+  // Two-way sync of player cards. The phone says which cards it has and how new (`have`: id -> timestamp) and
+  // may send cards; it gets back every card the server has newer, and the ids the server wants from it.
+  sync({ have, cards }) {
+    absorb(cards);
+    have = have && typeof have === 'object' ? have : {};
+    const ids = Object.keys(have).slice(0, 500);
+    return {
+      cards: Object.keys(players).filter(id => !(have[id] >= (players[id].at || 0))).map(cardOf),
+      want: ids.filter(id => !players[id] || (players[id].at || 0) < have[id]),
+    };
+  },
+
+  // A phone whose room this server doesn't know (it restarted, or its disk was wiped) hands back its sealed copy.
+  // A copy only replaces a room nobody has played in since it came back, and only with a newer copy.
+  restore({ seal: text }) {
+    let r;
+    try { r = unseal(text); } catch { throw 'That room copy is not valid'; }
+    if (Date.now() - r.touched > 6 * 3600e3) throw 'That game is too old';
+    const old = rooms.get(r.code);
+    if (old && !(old.restored && old.touched < r.touched)) return {};
+    if (!old && rooms.size >= MAX_ROOMS) throw 'The server is full right now. Try again in a little while.';
+    if (old) { clearTimeout(old.t); old.players.forEach(drop); }
+    const room = { ...roomFrom(r), restored: true };
+    rooms.set(room.code, room);
+    arm(room); nudgeBots(room); saveRooms();
+    return {};
   },
 
   // Host tool: a one-time link that moves a player's seat to another phone (theirs died, or they switched).
@@ -308,8 +343,7 @@ const api = {
   },
 
   // Who am I? Creates a saved player on first visit (when a name is given), and lists waiting invites.
-  hello({ player, name, cards }) {
-    absorb(cards); // this phone's copies of player cards, in case this server has forgotten them
+  hello({ player, name }) {
     let id = auth(player), secret;
     name = cleanName(name);
     if (!id) {
@@ -319,7 +353,7 @@ const api = {
       players[id] = { name, key: hash(secret).toString('hex'), known: {} };
       touch(id);
     } else if (name && name !== players[id].name) { players[id].name = name; touch(id); }
-    return { build: BUILD, known: true, id, secret, name: players[id].name, record: recordOf(id), points: players[id].points || 0, ach: players[id].ach || {}, invites: openInvites(id), card: cardOf(id) };
+    return { build: BUILD, known: true, id, secret, name: players[id].name, record: recordOf(id), points: players[id].points || 0, ach: players[id].ach || {}, invites: openInvites(id) };
   },
 
   // Invite someone you have played with before into the room you are sitting in.
@@ -440,7 +474,7 @@ http.createServer((req, res) => {
     const ip = addressOf(req);
     if (tooMany('api', ip, 120, 60e3)) return json(res, 429, { error: 'Slow down a little and try again.' });
     let body = '';
-    req.on('data', d => { body += d; if (body.length > 64e3) req.destroy(); }); // room for a phone's player cards
+    req.on('data', d => { body += d; if (body.length > 512e3) req.destroy(); }); // room for a phone's player cards
     req.on('end', () => {
       try { json(res, 200, api[name].call({ ip }, JSON.parse(body))); }
       catch (e) { json(res, 400, { error: typeof e === 'string' ? e : 'Bad request' }); }

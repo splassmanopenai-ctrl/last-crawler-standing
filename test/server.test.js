@@ -169,7 +169,7 @@ test('one device cannot flood the server with rooms', async () => {
   } finally { server.kill(); }
 });
 
-test('player cards on phones bring players back to a server that forgot them, and cannot be forged', async () => {
+test('player cards sync both ways: phones bring players back to a server that forgot them, and cannot forge them', async () => {
   const other = fs.mkdtempSync(path.join(os.tmpdir(), 'lcs-'));
   let server = await boot({ DATA_DIR: other, STATS_KEY: 'shared-key' });
   try {
@@ -179,11 +179,13 @@ test('player cards on phones bring players back to a server that forgot them, an
     await post('join', { name: 'Bo', code: r.code, player: { id: b.id, secret: b.secret } });
     await post('move', { code: r.code, token: r.token, move: { type: 'start' } });
     await post('move', { code: r.code, token: r.token, move: { type: 'kick', target: 1 } }); // Ann wins
-    const lobby = await firstView(r.code, r.token);
-    assert.strictEqual(lobby.cards.length, 2); // after a game, each phone is handed everyone's cards
-    assert.ok(lobby.achieved.includes('firstwin')); // and its own new achievements, for the popup
-    assert.ok(lobby.game.log.includes('New Achievement! Ann: Last Crawler Standing (For Now)'));
-    const cards = lobby.cards;
+
+    // Ann's phone syncs from nothing: it gets every card, and the server wants none.
+    const first = await post('sync', { have: {} });
+    assert.strictEqual(first.cards.length, 2);
+    assert.deepStrictEqual(first.want, []);
+    const cards = first.cards, have = Object.fromEntries(cards.map(c => [JSON.parse(c.d).id, JSON.parse(c.d).at]));
+    assert.strictEqual((await post('sync', { have })).cards.length, 0); // up to date: nothing comes back
 
     // The disk is wiped: a fresh data folder, same STATS_KEY.
     server.kill(); await sleep(200);
@@ -194,15 +196,46 @@ test('player cards on phones bring players back to a server that forgot them, an
     // A forged card (more wins, signature kept) is ignored.
     const annCard = cards.find(c => JSON.parse(c.d).id === a.id), fake = JSON.parse(annCard.d);
     fake.record.wins = 99; fake.at++;
-    assert.strictEqual((await post('hello', { player: A, cards: [{ d: JSON.stringify(fake), s: annCard.s }] })).known, false);
+    await post('sync', { have: {}, cards: [{ d: JSON.stringify(fake), s: annCard.s }] });
+    assert.strictEqual((await post('hello', { player: A })).known, false);
 
-    // Ann's phone hands back both cards: Ann is known again, with her record, points and Bo as a friend.
-    const back = await post('hello', { player: A, cards });
+    // Ann's phone syncs: the server asks for both cards, she sends them, and Ann is known again with everything.
+    const ask = await post('sync', { have });
+    assert.deepStrictEqual(ask.want.sort(), [a.id, b.id].sort());
+    await post('sync', { have, cards });
+    const back = await post('hello', { player: A });
     assert.deepStrictEqual([back.name, back.record.wins, back.points > 4, back.ach.firstwin > 0], ['Ann', 1, true, true]);
+    // A brand new phone now gets the whole group, for its Hall of Fame.
+    assert.strictEqual((await post('sync', { have: {} })).cards.length, 2);
     const room = await post('join', { name: 'Ann', player: A });
-    const alone = await firstView(room.code, room.token);
-    assert.deepStrictEqual(alone.friends.map(f => f.name), ['Bo']);
-    assert.strictEqual(alone.cards.length, 2); // Bo isn't here, but Ann's phone still gets his card as a backup
+    assert.deepStrictEqual((await firstView(room.code, room.token)).friends.map(f => f.name), ['Bo']);
+  } finally { server.kill(); fs.rmSync(other, { recursive: true, force: true }); }
+});
+
+test('a game in progress comes back from a phone\'s sealed copy after the server loses its disk', async () => {
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), 'lcs-'));
+  let server = await boot({ DATA_DIR: other, STATS_KEY: 'shared-key' });
+  try {
+    const a = await post('join', { name: 'Ann' }), b = await post('join', { name: 'Bo', code: a.code });
+    await post('move', { code: a.code, token: a.token, move: { type: 'start' } });
+    const before = await firstView(a.code, a.token);
+    assert.ok(!before.seal.includes('Ann'), 'the copy is encrypted');
+    server.kill(); await sleep(200);
+    fs.rmSync(other, { recursive: true, force: true });
+    server = await boot({ DATA_DIR: other, STATS_KEY: 'shared-key' });
+    assert.strictEqual(await firstView(a.code, a.token), null); // the server forgot the room
+
+    const bad = before.seal.slice(0, -4) + (before.seal.endsWith('AAAA') ? 'BBBB' : 'AAAA');
+    assert.strictEqual((await post('restore', { seal: bad })).ok, false); // tampered copies are refused
+    assert.ok((await post('restore', { seal: before.seal })).ok);
+    const after = await firstView(a.code, a.token);
+    assert.deepStrictEqual([after.game.log, after.game.turn], [before.game.log, before.game.turn]);
+    assert.strictEqual((await firstView(a.code, b.token)).you, 1);
+    // Once someone plays on, an older copy can't roll the game back.
+    const mover = after.game.turn === 0 ? a : b;
+    assert.ok((await post('move', { code: a.code, token: mover.token, move: { type: 'action', action: 'income' } })).ok);
+    await post('restore', { seal: before.seal });
+    assert.notDeepStrictEqual((await firstView(a.code, a.token)).game.log, before.game.log);
   } finally { server.kill(); fs.rmSync(other, { recursive: true, force: true }); }
 });
 
