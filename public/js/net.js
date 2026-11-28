@@ -66,7 +66,9 @@ function tick() {
 setInterval(tick, 500);
 
 async function post(path, body) {
-  const r = await fetch('/api/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  let r;
+  try { r = await fetch('/api/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); }
+  catch { throw new Error("Can't reach the server. Check your signal and try again."); }
   const j = await r.json();
   if (!r.ok) throw new Error(j.error);
   return j;
@@ -83,7 +85,9 @@ function connect() {
     // Someone joined, or a game just ended: their newer player cards are worth fetching.
     if (!v || String(v.names) !== String(next.names) || (next.game && next.game.phase === 'over' && !(v.game && v.game.phase === 'over'))) syncSoon();
     restoring = false;
-    prev = v && v.game; v = next; deadlineAt = v.left == null ? null : Date.now() + v.left; fresh = true; render(); fresh = false; };
+    prev = v && v.game; v = next; deadlineAt = v.left == null ? null : Date.now() + v.left; fresh = true; render(); fresh = false;
+    if (!alertTried && !tv) { alertTried = true; alertMe(false).catch(() => {}); } // quietly re-arm alerts if allowed before
+  };
   // The server says "gone" when the room no longer exists. Plain errors are not trusted for this:
   // a page reload also fires one. Dropped connections retry on their own.
   // Rooms vanish when the server restarts without its disk: first offer it this phone's sealed copy of the room.
@@ -97,9 +101,31 @@ function connect() {
   es.addEventListener('react', e => heckle(JSON.parse(e.data)));
 }
 
+// Turn alerts: a push notification when the game waits on you and your screen is off. Needs the service worker,
+// and on iPhone the game added to the Home Screen. `ask` shows the browser's permission prompt (needs a tap).
+let alertTried = false;
+const canAlert = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+async function alertMe(ask) {
+  if (!canAlert() || !v || !v.vapid) return;
+  if (ask && await Notification.requestPermission() !== 'granted') return toast('Alerts are blocked. Allow notifications for this site in your settings.');
+  if (Notification.permission !== 'granted') return;
+  const reg = await navigator.serviceWorker.ready, key = Uint8Array.from(atob(v.vapid.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+  let sub = await reg.pushManager.getSubscription();
+  // Subscribed under an older server key (STATS_KEY changed): start over.
+  if (sub && sub.options.applicationServerKey && new Uint8Array(sub.options.applicationServerKey).join() !== key.join()) { await sub.unsubscribe(); sub = null; }
+  sub = sub || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+  await post('pushsub', { ...session, sub: sub.toJSON() });
+  if (ask) toast("Alerts on. We'll buzz you when it's your move.");
+}
+// Tell the server when this screen goes off or comes back, so alerts reach a phone whose connection lingers.
+document.addEventListener('visibilitychange', () => {
+  if (session && !tv) navigator.sendBeacon('/api/seen', JSON.stringify({ ...session, hidden: document.hidden }));
+});
+
 function leave() {
   if (es) es.close();
   localStorage.removeItem(KEY); localStorage.removeItem(SEAL);
+  alertTried = false;
   session = v = es = null;
   render();
 }

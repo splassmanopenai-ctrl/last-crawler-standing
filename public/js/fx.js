@@ -143,8 +143,8 @@ function signature(e, delay) {
 }
 
 // A heckle from a knocked-out crawler floats up every screen.
-function heckle({ name, i }) {
-  const el = overlay('heckle', h('b', {}, REACTIONS[i]), ` ${name}`);
+function heckle({ name, text }) {
+  const el = overlay('heckle', h('b', {}, text), ` ${name}`);
   el.style.left = `${15 + Math.random() * 60}%`;
   if (!moving()) return later(1800, () => el.remove());
   window.anime.animate(el, { y: { from: 0, to: -260 }, duration: 1800, ease: 'outQuad', onComplete: () => el.remove() });

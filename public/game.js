@@ -244,6 +244,43 @@
       clutch: +(won && live(g.players[i]) === 1), broke: +(g.players[i].coins === 0) };
   }
 
+  // The Loot Shop: cosmetics bought with banked points. Nothing here changes how the game plays.
+  // Titles show under your name at the table; card backs are what rivals see on your hidden cards; heckles join the
+  // knocked-out crawler's heckle buttons. Achievement titles you've earned are free to wear (key 'a:<achievement>').
+  const SHOP = {
+    't:notlying': { kind: 'title', name: 'Definitely Not Lying', cost: 15 },
+    't:snack': { kind: 'title', name: 'Snack With a Name Tag', cost: 15 },
+    't:fanfave': { kind: 'title', name: 'Fan Favourite (Self-Proclaimed)', cost: 25 },
+    't:middle': { kind: 'title', name: 'Middle Management', cost: 25 },
+    't:problem': { kind: 'title', name: "The Dungeon's Problem", cost: 40 },
+    't:trainee': { kind: 'title', name: 'Floor Boss in Training', cost: 40 },
+    't:distinct': { kind: 'title', name: 'Legally Distinct Hero', cost: 60 },
+    't:leastfave': { kind: 'title', name: "The System's Least Favourite", cost: 60 },
+    'b:gilded': { kind: 'back', name: 'Gilded Skull', cost: 40, colors: ['#8a6a12', '#000', '#f5e3a1'] },
+    'b:toxic': { kind: 'back', name: 'Radioactive', cost: 40, colors: ['#2f6b1f', '#b8ff3c', '#d9ffb0'] },
+    'b:void': { kind: 'back', name: 'Space Fishbowl', cost: 60, colors: ['#17224d', '#7fd3ff', '#cfe9ff'] },
+    'b:royal': { kind: 'back', name: 'Princess Pink', cost: 80, colors: ['#b03a7a', '#ffd6ec', '#fff0f8'] },
+    'h:calledit': { kind: 'heckle', name: 'Called it.', cost: 10 },
+    'h:bluffed': { kind: 'heckle', name: "I'd have bluffed.", cost: 10 },
+    'h:skill': { kind: 'heckle', name: 'Skill issue.', cost: 15 },
+    'h:ratings': { kind: 'heckle', name: 'Ratings gold!', cost: 15 },
+    'h:sponsor': { kind: 'heckle', name: 'Sponsor this!', cost: 20 },
+    'h:fafo': { kind: 'heckle', name: 'F*ck around, find out.', cost: 25 },
+  };
+  const BACK_COLORS = ['#7d1418', '#f5b921', '#ecdcb4']; // the standard back: show-red, gold frame, bone skull
+  const TIERS = ['bronze', 'silver', 'gold', 'legendary'];
+  // What a saved player shows at the table: their chosen title, card back, and rarest achievement as a badge.
+  function looksOf(p) {
+    if (!p) return null;
+    const ach = p.ach || {}, owned = p.owned || {};
+    const t = p.title, title = t && (t.startsWith('a:') ? ach[t.slice(2)] && ACHIEVEMENTS[t.slice(2)] && ACHIEVEMENTS[t.slice(2)].title
+      : owned[t] && SHOP[t] && SHOP[t].name);
+    const best = Object.keys(ach).filter(k => ACHIEVEMENTS[k])
+      .sort((a, b) => TIERS.indexOf(ACHIEVEMENTS[b].box) - TIERS.indexOf(ACHIEVEMENTS[a].box) || ach[b] - ach[a])[0];
+    return { title: title || null, back: p.back && owned[p.back] ? p.back : null,
+      badge: best ? { title: ACHIEVEMENTS[best].title, box: ACHIEVEMENTS[best].box } : null };
+  }
+
   // Index of the single highest score above zero; ties give nobody the award.
   function top(stats, score) {
     const scores = stats.map(score), best = Math.max(...scores);
@@ -565,5 +602,5 @@
   // A game read back from disk: everything is plain data except the shuffler, which is reattached here.
   const revive = (g, rng = Math.random) => Object.assign(g, { rng });
 
-  Object.assign(exports, { revive, ROLES, ACTIONS, REACTIONS, BOT_NAMES, ACHIEVEMENTS, BOXES, achievementsFor, tally, actionsFor, rolesFor, awards, newGame, act, view, waitingOn, autoMove, forfeit });
+  Object.assign(exports, { revive, ROLES, ACTIONS, REACTIONS, BOT_NAMES, ACHIEVEMENTS, BOXES, achievementsFor, tally, SHOP, BACK_COLORS, looksOf, actionsFor, rolesFor, awards, newGame, act, view, waitingOn, autoMove, forfeit });
 })(typeof module !== 'undefined' ? module.exports : (window.Game = {}));

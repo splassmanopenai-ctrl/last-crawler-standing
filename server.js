@@ -1,6 +1,6 @@
 // Relay server: serves the phone UI, holds every room's hidden state, sends each player only their own view.
 const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto');
-const { newGame, act, view, waitingOn, autoMove, forfeit, actionsFor, revive, REACTIONS, BOT_NAMES, ACHIEVEMENTS, BOXES, achievementsFor, tally } = require('./public/game.js');
+const { newGame, act, view, waitingOn, autoMove, forfeit, actionsFor, revive, REACTIONS, BOT_NAMES, ACHIEVEMENTS, BOXES, achievementsFor, tally, SHOP, looksOf } = require('./public/game.js');
 
 const PORT = process.env.PORT || 3000;
 const PASSCODE = process.env.PASSCODE || '';
@@ -50,8 +50,8 @@ const SIGN = (() => {
 const sign = d => crypto.createHmac('sha256', SIGN).update(d).digest('hex');
 const touch = id => { players[id].at = Date.now(); save(); }; // every change gets a timestamp, so the newest card wins
 function cardOf(id) {
-  const { name, key, known, record, points, ach, at } = players[id];
-  const d = JSON.stringify({ id, name, key, known, record, points, ach, at: at || 0 });
+  const { name, key, known, record, points, ach, spent, owned, title, back, at } = players[id];
+  const d = JSON.stringify({ id, name, key, known, record, points, ach, spent, owned, title, back, at: at || 0 });
   return { d, s: sign(d) };
 }
 // Take back any card that is genuine and newer than what this server holds.
@@ -66,6 +66,62 @@ function absorb(cards) {
 }
 // Points earned outside any one game, banked for badges and perks later.
 const pointsFor = (won, callsRight) => 1 + (won ? 3 : 0) + callsRight;
+
+// Turn alerts: Web Push (RFC 8291 encryption, RFC 8292 VAPID) with Node's own crypto, no dependencies. The VAPID key
+// is derived from the signing key, so phones' alert subscriptions survive restarts and redeploys while STATS_KEY does.
+const b64u = b => Buffer.from(b).toString('base64url');
+const VAPID = (() => {
+  const d = crypto.createHash('sha256').update('vapid:' + SIGN).digest(), ecdh = crypto.createECDH('prime256v1');
+  ecdh.setPrivateKey(d);
+  const pub = ecdh.getPublicKey();
+  const key = crypto.createPrivateKey({ key: { kty: 'EC', crv: 'P-256', d: b64u(d), x: b64u(pub.subarray(1, 33)), y: b64u(pub.subarray(33)) }, format: 'jwk' });
+  return { key, pub: b64u(pub) };
+})();
+const PUSH_CONTACT = process.env.PUSH_CONTACT || 'https://github.com/splassmanopenai-ctrl/last-crawler-standing';
+// Only the browsers' own push services: a subscription is a URL the server will POST to, so never an arbitrary one.
+const PUSH_HOSTS = /(^|\.)(fcm\.googleapis\.com|push\.services\.mozilla\.com|push\.apple\.com|notify\.windows\.com)$/;
+const pushable = u => (u.protocol === 'https:' && PUSH_HOSTS.test(u.hostname)) || (!!process.env.PUSH_ALLOW && u.origin === process.env.PUSH_ALLOW); // PUSH_ALLOW: tests only
+function cleanSub(sub) {
+  try {
+    const url = new URL(sub.endpoint), p256dh = Buffer.from(sub.keys.p256dh, 'base64url'), auth = Buffer.from(sub.keys.auth, 'base64url');
+    if (!pushable(url) || p256dh.length !== 65 || p256dh[0] !== 4 || auth.length !== 16) return null;
+    return { endpoint: url.href, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth } };
+  } catch { return null; }
+}
+// aes128gcm content encoding, one record: salt | record size | key id length | our public key | ciphertext.
+function encryptPush(sub, text) {
+  const ua = Buffer.from(sub.keys.p256dh, 'base64url'), auth = Buffer.from(sub.keys.auth, 'base64url');
+  const ecdh = crypto.createECDH('prime256v1'), as = ecdh.generateKeys(), salt = crypto.randomBytes(16);
+  const ikm = Buffer.from(crypto.hkdfSync('sha256', ecdh.computeSecret(ua), auth, Buffer.concat([Buffer.from('WebPush: info\0'), ua, as]), 32));
+  const cek = Buffer.from(crypto.hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: aes128gcm\0'), 16));
+  const nonce = Buffer.from(crypto.hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: nonce\0'), 12));
+  const c = crypto.createCipheriv('aes-128-gcm', cek, nonce);
+  const body = Buffer.concat([c.update(Buffer.concat([Buffer.from(text), Buffer.from([2])])), c.final(), c.getAuthTag()]);
+  const head = Buffer.alloc(21); salt.copy(head); head.writeUInt32BE(4096, 16); head[20] = 65;
+  return Buffer.concat([head, as, body]);
+}
+async function sendPush(p, data) {
+  const url = new URL(p.sub.endpoint);
+  const part = o => b64u(JSON.stringify(o));
+  const unsigned = `${part({ typ: 'JWT', alg: 'ES256' })}.${part({ aud: url.origin, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: PUSH_CONTACT })}`;
+  const jwt = `${unsigned}.${b64u(crypto.sign('sha256', Buffer.from(unsigned), { key: VAPID.key, dsaEncoding: 'ieee-p1363' }))}`;
+  const r = await fetch(p.sub.endpoint, { method: 'POST', body: encryptPush(p.sub, JSON.stringify(data)), headers: {
+    TTL: '120', Urgency: 'high', 'Content-Encoding': 'aes128gcm', 'Content-Type': 'application/octet-stream', Authorization: `vapid t=${jwt}, k=${VAPID.pub}` } });
+  if (r.status === 404 || r.status === 410) p.sub = null; // the phone unsubscribed or the subscription expired
+}
+// Alert anyone the game is waiting on whose screen is off or who has left the page: once per decision, not per update.
+function alertTurns(room) {
+  const g = room.game;
+  if (!g || g.phase === 'over') return;
+  const key = `${g.phase}:${g.turn}:${JSON.stringify(g.cur)}`;
+  for (const i of waitingOn(g)) {
+    const p = room.players[i];
+    if (!p || p.bot || !p.sub || (p.res && !p.hidden) || p.pinged === key) continue;
+    p.pinged = key;
+    sendPush(p, { title: 'Your move!', body: `Room ${room.code}: ${g.log[g.log.length - 1]}`, code: room.code })
+      .catch(e => console.error('Turn alert failed:', e.message));
+  }
+}
 
 // Sealed rooms: each phone in a room also keeps an encrypted copy of it, so a game survives a server that forgot it.
 // Encrypted (not just signed) because a room holds everyone's hidden cards and seat tokens. Same key as the cards.
@@ -112,7 +168,11 @@ const roomView = (room, i) => ({
   achieved: (room.game && room.game.achieved && room.game.achieved[i]) || [], // this seat's new achievements from the game just ended
   timer: room.timer || 0, variant: !!room.variant, left: room.deadline ? room.deadline - Date.now() : null, // ms left, so phone clocks need not agree
   away: awayList(room),
+  looks: looksFor(room),
+  vapid: VAPID.pub, alerts: !!room.players[i].sub, // turn alerts: the key phones subscribe with, and whether this seat has
 });
+// Each seat's title, card back and badge, for everyone at the table to see.
+const looksFor = room => room.players.map(p => p.pid ? looksOf(players[p.pid]) : null);
 // Seats whose phone has been gone a while: the others may move for them, so one closed browser can't stall a game.
 const isAway = p => !p.bot && !p.kicked && !p.res && p.away && Date.now() - p.away > AWAY_MS;
 const awayList = room => room.players.map(isAway);
@@ -121,7 +181,7 @@ const awayList = room => room.players.map(isAway);
 // can watch, as anyone with it can join the lobby.
 const tvView = room => ({ build: BUILD, tv: true, code: room.code, names: room.players.map(p => p.name), bots: room.players.map(p => !!p.bot),
   game: room.game ? view(room.game, -1) : null, timer: room.timer || 0, variant: !!room.variant,
-  left: room.deadline ? room.deadline - Date.now() : null, away: awayList(room) });
+  left: room.deadline ? room.deadline - Date.now() : null, away: awayList(room), looks: looksFor(room) });
 
 const GONE = 'event: gone\ndata: {}\n\n'; // tells a phone to forget its seat
 const drop = p => p.res && p.res.end(GONE);
@@ -159,6 +219,7 @@ function record(room) {
     r.t = r.t || {};
     for (const [k, n] of Object.entries(tally(g, i))) if (typeof n === 'number') r.t[k] = (r.t[k] || 0) + n;
     r.streak = g.winner === i ? (r.streak || 0) + 1 : 0;
+    r.best = Math.max(r.best || 0, r.streak);
     r.cold = g.winner === i ? 0 : (r.cold || 0) + 1;
     p.points = (p.points || 0) + pointsFor(g.winner === i, g.stats[i].callsRight);
     // New achievements: each pays its box's points, and the room hears about it.
@@ -182,7 +243,7 @@ const ROOMS = path.join(path.dirname(DATA), 'rooms.json');
 let savingRooms;
 const roomData = r => ({
   code: r.code, practice: r.practice, timer: r.timer, variant: r.variant, touched: r.touched, ready: [...r.ready],
-  players: r.players.map(({ name, token, pid, bot, kicked }) => ({ name, token, pid, bot, kicked })),
+  players: r.players.map(({ name, token, pid, bot, kicked, sub }) => ({ name, token, pid, bot, kicked, sub })),
   // plain data; the shuffler function is left out by JSON and reattached on load. Phones only ever show the last 40
   // log lines, so older ones are dropped to keep every phone's sealed copy small.
   game: r.game && { ...r.game, log: r.game.log.slice(-60) },
@@ -211,6 +272,7 @@ function push(room) {
   room.touched = Date.now();
   room.sealed = seal(roomData(room)); room.restored = false;
   room.players.forEach((p, i) => p.res && p.res.write(`data: ${JSON.stringify(roomView(room, i))}\n\n`));
+  alertTurns(room);
   if (room.tvs && room.tvs.size) { const msg = `data: ${JSON.stringify(tvView(room))}\n\n`; room.tvs.forEach(r => r.write(msg)); }
   room.awaySeen = awayList(room).join();
   nudgeBots(room);
@@ -328,15 +390,18 @@ const api = {
   },
 
   // A knocked-out player heckles: a short line floats across every screen in the room.
-  react({ code, token, i }) {
+  react({ code, token, i, h }) {
     const s = seat(code, token);
     if (!s) throw 'You are not in this room';
     const g = s.room.game, me = s.room.players[s.i];
     if (!g || g.phase === 'over' || g.players[s.i].cards.some(c => !c.revealed)) throw 'Only knocked-out crawlers can heckle';
-    if (!Number.isInteger(i) || !REACTIONS[i]) throw 'Bad reaction';
+    // A standard heckle by number, or one bought from the Loot Shop by key.
+    const mine = h && SHOP[h] && SHOP[h].kind === 'heckle' && me.pid && (players[me.pid].owned || {})[h];
+    const text = mine ? SHOP[h].name : Number.isInteger(i) && REACTIONS[i];
+    if (!text) throw 'Bad reaction';
     if (Date.now() - (me.reacted || 0) < 1200) throw 'Easy there';
     me.reacted = Date.now();
-    const msg = `event: react\ndata: ${JSON.stringify({ name: me.name, i })}\n\n`;
+    const msg = `event: react\ndata: ${JSON.stringify({ name: me.name, text })}\n\n`;
     s.room.players.forEach(p => p.res && p.res.write(msg));
     if (s.room.tvs) s.room.tvs.forEach(r => r.write(msg));
     return {};
@@ -353,7 +418,62 @@ const api = {
       players[id] = { name, key: hash(secret).toString('hex'), known: {} };
       touch(id);
     } else if (name && name !== players[id].name) { players[id].name = name; touch(id); }
-    return { build: BUILD, known: true, id, secret, name: players[id].name, record: recordOf(id), points: players[id].points || 0, ach: players[id].ach || {}, invites: openInvites(id) };
+    return { build: BUILD, known: true, id, secret, name: players[id].name, record: recordOf(id), points: players[id].points || 0, ach: players[id].ach || {},
+      spent: players[id].spent || 0, owned: players[id].owned || {}, title: players[id].title || null, back: players[id].back || null, invites: openInvites(id) };
+  },
+
+  // Turn alerts: this seat's phone hands over its push subscription.
+  pushsub({ code, token, sub }) {
+    const s = seat(code, token);
+    if (!s) throw 'You are not in this room';
+    const clean = cleanSub(sub);
+    if (!clean) throw "That phone can't do alerts";
+    s.room.players[s.i].sub = clean;
+    saveRooms();
+    return {};
+  },
+
+  // The phone's screen went off or came back: alerts go to hidden screens even while their connection lingers.
+  seen({ code, token, hidden }) {
+    const s = seat(code, token);
+    if (!s) throw 'You are not in this room';
+    s.room.players[s.i].hidden = hidden === true;
+    if (hidden === true) alertTurns(s.room);
+    return {};
+  },
+
+  // The Loot Shop: spend banked points on a cosmetic. Points earned never go down; the balance is points - spent.
+  buy({ player, item }) {
+    const id = auth(player), it = Object.hasOwn(SHOP, item) && SHOP[item];
+    if (!id) throw 'Play a game first to become a saved player';
+    if (!it) throw 'No such item';
+    const p = players[id];
+    p.owned = p.owned || {};
+    if (p.owned[item]) throw 'You already own that';
+    if ((p.points || 0) - (p.spent || 0) < it.cost) throw 'Not enough points';
+    p.owned[item] = Date.now(); p.spent = (p.spent || 0) + it.cost;
+    touch(id);
+    return { spent: p.spent, owned: p.owned };
+  },
+
+  // Wear a title (a bought one, or 'a:<achievement>' for one you've earned) and/or a card back. null takes it off.
+  wear({ player, title, back }) {
+    const id = auth(player);
+    if (!id) throw 'Play a game first to become a saved player';
+    const p = players[id], owned = p.owned || {};
+    if (title !== undefined) {
+      const ok = title === null || (typeof title === 'string' && (title.startsWith('a:') ? (p.ach || {})[title.slice(2)]
+        : owned[title] && SHOP[title].kind === 'title'));
+      if (!ok) throw "You haven't got that title";
+      p.title = title;
+    }
+    if (back !== undefined) {
+      if (back !== null && !(owned[back] && SHOP[back].kind === 'back')) throw "You haven't got that card back";
+      p.back = back;
+    }
+    touch(id);
+    for (const room of rooms.values()) if (room.players.some(s => s.pid === id)) push(room); // show it at the table now
+    return { title: p.title || null, back: p.back || null };
   },
 
   // Invite someone you have played with before into the room you are sitting in.
@@ -500,7 +620,7 @@ http.createServer((req, res) => {
     if (!s) return res.end(GONE);
     const p = s.room.players[s.i];
     if (p.res) p.res.end();
-    p.res = res; p.away = null;
+    p.res = res; p.away = null; p.hidden = false;
     res.write(`data: ${JSON.stringify(roomView(s.room, s.i))}\n\n`);
     req.on('close', () => { if (p.res === res) { p.res = null; p.away = Date.now(); } });
     return;

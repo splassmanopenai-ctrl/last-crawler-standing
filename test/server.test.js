@@ -256,3 +256,78 @@ test('a player whose phone is gone can be skipped, and a TV watches without seei
     assert.ok(tvView.game.players.every(p => p.cards.every(c => c.role === null)));
   } finally { server.kill(); }
 });
+
+test('the Loot Shop sells cosmetics for points, and players wear titles, backs and badges at the table', async () => {
+  const server = await boot();
+  try {
+    const a = await post('hello', { name: 'Ann' }), A = { id: a.id, secret: a.secret };
+    const b = await post('hello', { name: 'Bo' }), B = { id: b.id, secret: b.secret };
+    assert.strictEqual((await post('buy', { player: A, item: 't:snack' })).ok, false); // no points yet
+    const r = await post('join', { name: 'Ann', player: A });
+    await post('join', { name: 'Bo', code: r.code, player: B });
+    await post('move', { code: r.code, token: r.token, move: { type: 'start' } });
+    await post('move', { code: r.code, token: r.token, move: { type: 'kick', target: 1 } }); // Ann wins, earns points
+    const before = await post('hello', { player: A }), balance = before.points - before.spent;
+    assert.ok(balance >= 15 && balance < 80, `balance ${balance}`);
+
+    assert.ok((await post('buy', { player: A, item: 't:snack' })).ok);
+    assert.strictEqual((await post('buy', { player: A, item: 't:snack' })).ok, false); // already owned
+    assert.strictEqual((await post('buy', { player: A, item: 'b:royal' })).ok, false); // 80: too dear
+    assert.strictEqual((await post('buy', { player: A, item: 'nope' })).ok, false);
+    assert.strictEqual((await post('hello', { player: A })).spent, 15);
+
+    assert.strictEqual((await post('wear', { player: A, title: 't:middle' })).ok, false); // not bought
+    assert.strictEqual((await post('wear', { player: A, title: 'a:boss' })).ok, false); // not earned
+    assert.strictEqual((await post('wear', { player: A, back: 'b:void' })).ok, false);
+    assert.ok((await post('wear', { player: A, title: 't:snack' })).ok);
+    let look = (await firstView(r.code, r.token)).looks[0];
+    assert.deepStrictEqual([look.title, look.badge.box], ['Snack With a Name Tag', 'gold']); // rarest: Not a Scratch on You
+    assert.ok((await post('wear', { player: A, title: 'a:firstwin' })).ok); // earned achievement titles are free
+    look = (await firstView(r.code, r.token)).looks[0];
+    assert.strictEqual(look.title, 'Last Crawler Standing (For Now)');
+    assert.strictEqual((await firstView(r.code, r.token)).looks[1].title, null);
+  } finally { server.kill(); }
+});
+
+test('turn alerts: a seat that is away gets one encrypted, VAPID-signed push per decision, and only to push services', async () => {
+  const crypto = require('node:crypto'), http = require('node:http');
+  const got = [];
+  const sink = http.createServer((req, res) => { const parts = []; req.on('data', d => parts.push(d)); req.on('end', () => { got.push({ headers: req.headers, body: Buffer.concat(parts) }); res.writeHead(201); res.end(); }); });
+  await new Promise(r => sink.listen(0, '127.0.0.1', r));
+  const origin = `http://127.0.0.1:${sink.address().port}`;
+  const server = await boot({ PUSH_ALLOW: origin });
+  try {
+    const a = await post('join', { name: 'Ann' }), b = await post('join', { name: 'Bo', code: a.code });
+    await post('move', { code: a.code, token: a.token, move: { type: 'start' } });
+    const turn = (await firstView(a.code, a.token)).game.turn, seat = turn === 0 ? a : b;
+    const ua = crypto.createECDH('prime256v1'), uaPub = ua.generateKeys(), auth = crypto.randomBytes(16);
+    const keys = { p256dh: uaPub.toString('base64url'), auth: auth.toString('base64url') };
+    assert.strictEqual((await post('pushsub', { code: a.code, token: seat.token, sub: { endpoint: 'https://evil.example.com/x', keys } })).ok, false);
+    assert.ok((await post('pushsub', { code: a.code, token: seat.token, sub: { endpoint: `${origin}/push/1`, keys } })).ok);
+    await post('seen', { code: a.code, token: seat.token, hidden: true });
+    await post('seen', { code: a.code, token: seat.token, hidden: true }); // same decision: no second alert
+    await sleep(300);
+    assert.strictEqual(got.length, 1);
+
+    // Decrypt it as the phone would (RFC 8291).
+    const { headers, body } = got[0];
+    assert.strictEqual(headers['content-encoding'], 'aes128gcm');
+    const salt = body.subarray(0, 16), as = body.subarray(21, 86), ct = body.subarray(86);
+    const ikm = Buffer.from(crypto.hkdfSync('sha256', ua.computeSecret(as), auth, Buffer.concat([Buffer.from('WebPush: info\0'), uaPub, as]), 32));
+    const cek = Buffer.from(crypto.hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: aes128gcm\0'), 16));
+    const nonce = Buffer.from(crypto.hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: nonce\0'), 12));
+    const d = crypto.createDecipheriv('aes-128-gcm', cek, nonce); d.setAuthTag(ct.subarray(-16));
+    const plain = Buffer.concat([d.update(ct.subarray(0, -16)), d.final()]);
+    assert.strictEqual(plain[plain.length - 1], 2);
+    const msg = JSON.parse(plain.subarray(0, -1));
+    assert.deepStrictEqual([msg.title, msg.code], ['Your move!', a.code]);
+
+    // The VAPID signature checks out against the key the server hands phones.
+    const [, jwt, k] = headers.authorization.match(/^vapid t=([^,]+), k=(.+)$/);
+    const pub = Buffer.from(k, 'base64url'), [h64, c64, s64] = jwt.split('.');
+    const key = crypto.createPublicKey({ key: { kty: 'EC', crv: 'P-256', x: pub.subarray(1, 33).toString('base64url'), y: pub.subarray(33).toString('base64url') }, format: 'jwk' });
+    assert.ok(crypto.verify('sha256', Buffer.from(`${h64}.${c64}`), { key, dsaEncoding: 'ieee-p1363' }, Buffer.from(s64, 'base64url')));
+    assert.strictEqual(JSON.parse(Buffer.from(c64, 'base64url')).aud, origin);
+    assert.strictEqual((await firstView(a.code, a.token)).vapid, k);
+  } finally { server.kill(); sink.close(); }
+});

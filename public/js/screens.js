@@ -74,10 +74,10 @@ function seatRow(g, p, old) {
   const pop = old && old[p.id].coins !== p.coins ? ' pop' : '';
   const slam = i => old && p.cards[i].revealed && !old[p.id].cards[i].revealed ? ' slam' : '';
   return h('div', { className: `rival${g.turn === p.id && g.phase !== 'over' ? ' turn' : ''}${p.cards.every(c => c.revealed) ? ' dead' : ''}` },
-    h('span', { className: 'name' }, p.name),
+    h('span', { className: 'name' }, p.name, flair((v.looks || [])[p.id])),
     (v.away || [])[p.id] && g.phase !== 'over' && h('span', { className: 'note' }, 'away'),
     p.cards.map((c, i) => c.revealed ? chip(c.role, slam(i)) : c.role ? chip(c.role, ' peek')
-      : Object.assign(h('span', { className: 'back' }), { title: 'Hidden card' })),
+      : Object.assign(h('span', { className: 'back', style: `--card-back:url("${backFor(((v.looks || [])[p.id] || {}).back)}")` }), { title: 'Hidden card' })),
     p.cards.every(c => c.revealed) && Object.assign(h('span', { className: 'cancelled' }, 'Cancelled'), { id: `out-${p.id}` }),
     gold(p.coins, pop, old && old[p.id].coins, p.id),
     v.host && g.phase !== 'over' && p.cards.some(c => !c.revealed) && kickBtn(p.id, p.name));
@@ -121,6 +121,7 @@ function renderJoin() {
   const saved = myCard();
   if (page() === 'hof') subpage('Hall of Fame', h('p', { className: 'tag' }, 'The top 20 crawlers by wins. Tap one to see their achievements.'), hallOfFame());
   else if (page() === 'help') subpage('How to play', help());
+  else if (page() === 'shop') subpage('Loot Shop', h('div', { id: 'shop' }, shop(profile || saved)));
   else if (page() === 'me') subpage('My crawler', h('div', { id: 'mine' }, myPage(profile || saved)),
     h('section', { className: 'group' }, h('h2', { className: 'banner' }, 'Switching phones'),
       me && h('p', {}, 'This phone is your player. To move it, copy this code to the other phone. Keep it private.'), me && mine,
@@ -138,7 +139,7 @@ function renderJoin() {
       h('div', { className: 'group' }, h('h2', {}, 'Or start your own'), btn('Host a new game', () => join('')),
         btn('Practice against bots', () => join('', true), 'ghost', 'A quick game to learn the ropes'),
         h('details', {}, h('summary', {}, 'My server needs a passcode'), h('p', {}, 'Only for hosting. Joining a room never needs it.'), pass))),
-    h('nav', { className: 'grid' }, btn('Hall of Fame', () => goto('hof'), 'ghost', 'Leaderboard'), btn('How to play', () => goto('help'), 'ghost', 'Rules and tips')),
+    h('nav', { className: 'grid three' }, btn('Hall of Fame', () => goto('hof'), 'ghost'), btn('Loot Shop', () => goto('shop'), 'ghost'), btn('How to play', () => goto('help'), 'ghost')),
     !me && btn('Have a player code from another phone?', () => goto('me'), 'ghost mini'),
   );
   refreshHome();
@@ -150,8 +151,52 @@ function myPage(p) {
   const r = p.record || { games: 0, wins: 0 };
   return [h('div', { className: 'profile' }, h('div', { className: 'who' }, p.name),
     h('p', {}, `${plural(r.wins, 'win')} in ${plural(r.games, 'game')}. ${plural(p.points || 0, 'point')} banked.`)),
+  btn(`Loot Shop: ${plural((p.points || 0) - (p.spent || 0), 'point')} to spend`, () => goto('shop'), 'ghost'),
+  h('h2', { className: 'banner' }, 'Career'), career(r),
   h('h2', { className: 'banner' }, `Achievements: ${Object.keys(p.ach || {}).filter(k => ACHIEVEMENTS[k]).length} of ${Object.keys(ACHIEVEMENTS).length}`),
   trophies(p.ach || {})];
+}
+
+// Career stats from the record's running totals.
+function career(r) {
+  const t = r.t || {}, all = { ...actionsFor(false), ...actionsFor(true) };
+  const fave = Object.keys(all).sort((a, b) => (t[`a_${b}`] || 0) - (t[`a_${a}`] || 0))[0];
+  const row = (label, value) => h('div', { className: 'stat' }, h('span', {}, label), h('b', {}, String(value)));
+  if (!r.games) return h('p', { className: 'tag' }, 'Finish a game to start your career. The System is keeping score.');
+  return h('div', { className: 'stats' },
+    row('Win rate', `${Math.round(100 * r.wins / r.games)}%`), row('Best win streak', r.best || 0), row('Second places', t.second || 0),
+    row('Lies told', t.lies || 0), row('Caught lying', t.caught || 0),
+    row('Bluffs called right', t.callsRight || 0), row('Bluffs called wrong', t.callsWrong || 0),
+    row('Gold stolen', t.stole || 0), row('Gold stolen from you', t.stolenFrom || 0),
+    row('Cards taken by your attacks', t.hits || 0), row('Blocks', t.blocks || 0),
+    t[`a_${fave}`] > 0 && row('Favourite move', all[fave].name));
+}
+
+// The Loot Shop: titles, card backs and heckles for points, plus achievement titles you've earned, free.
+function shop(p) {
+  if (!p || !me) return h('p', { className: 'tag' }, 'Play a game first to become a saved player, then come back with some points.');
+  const owned = p.owned || {}, balance = (p.points || 0) - (p.spent || 0);
+  const act = (path, body) => post(path, { player: me, ...body }).then(() => hello()).then(() => fill(document.getElementById('shop'), shop(profile)), e => toast(e.message));
+  const wearing = (slot, key) => (p[slot] || null) === key;
+  const item = (key, it, extra) => h('div', { className: 'rival' }, extra, h('span', { className: 'name' }, it.name),
+    !(owned[key] || key.startsWith('a:')) ? btn(`${it.cost} pts`, () => act('buy', { item: key }), balance >= it.cost ? 'mini' : 'ghost mini')
+      : it.kind === 'heckle' ? h('span', { className: 'note' }, 'Owned')
+      : wearing(it.kind, key) ? btn('Take off', () => act('wear', { [it.kind]: null }), 'ghost mini')
+      : btn('Wear', () => act('wear', { [it.kind]: key }), 'mini'));
+  const of = kind => Object.entries(SHOP).filter(([, it]) => it.kind === kind);
+  const earned = Object.keys(p.ach || {}).filter(k => ACHIEVEMENTS[k]);
+  return [h('div', { className: 'profile' }, h('div', { className: 'who' }, plural(balance, 'point')),
+      h('p', {}, `to spend, of ${p.points || 0} earned. Win games and achievements to earn more.`)),
+    h('h2', { className: 'banner' }, 'Titles'), h('p', { className: 'tag' }, 'Shown under your name at the table.'),
+    of('title').map(([k, it]) => item(k, it)),
+    earned.length > 0 && [h('p', { className: 'tag' }, 'Achievement titles you have earned, free to wear:'),
+      earned.map(k => item(`a:${k}`, { kind: 'title', name: ACHIEVEMENTS[k].title }, null))],
+    h('h2', { className: 'banner' }, 'Card backs'), h('p', { className: 'tag' }, 'What rivals see on your hidden cards.'),
+    h('div', { className: 'rival' }, h('img', { className: 'swatch', src: CARD_BACK, alt: '' }), h('span', { className: 'name' }, 'Standard Skull'),
+      p.back ? btn('Wear', () => act('wear', { back: null }), 'mini') : h('span', { className: 'note' }, 'Wearing')),
+    of('back').map(([k, it]) => item(k, it, h('img', { className: 'swatch', src: backFor(k), alt: '' }))),
+    h('h2', { className: 'banner' }, 'Heckles'), h('p', { className: 'tag' }, 'Extra heckle buttons once you are knocked out.'),
+    of('heckle').map(([k, it]) => item(k, it))];
 }
 
 // The help page: the rules, then the things people actually ask about.
@@ -163,11 +208,17 @@ function help() {
     h('p', {}, 'Tap Host a new game and share the room code, invite link or QR code. Up to 6 crawlers. The host can set a move timer and the card set, and remove players with ✕.'),
     h('p', {}, 'Host passcode: some servers ask for one before you can host. Joining never needs it.'),
     h('p', {}, 'TV view: in the lobby, open Show it on a TV to put the table on a big screen. It never shows hidden cards.'),
+    h('p', {}, "Turn alerts: tap Alert me when it's my turn and your phone buzzes when the game waits on you, even with the screen off. On iPhone, first add the game to your Home Screen (Share, then Add to Home Screen) and open it from there."),
+    h('p', {}, 'No signal? Once you have opened the game, it opens again without one: your profile, achievements and the Hall of Fame are on your phone. Playing still needs the server.'),
     h('p', {}, "A dead phone: the host's Host tools make a seat link for the new phone. Anyone whose phone has been gone 2 minutes can be skipped."),
     h('h2', { className: 'banner' }, 'Points and achievements'),
     h('p', {}, `Every game pays points: 1 for playing, 3 more for winning, 1 per bluff you call correctly. The System also hands out ${Object.keys(ACHIEVEMENTS).length} achievements, each with a box of points: Bronze 2, Silver 5, Gold 10, Legendary 25. Practice games don't count.`),
     h('p', {}, 'Your record and achievements are saved on your phone and on the server, and every phone keeps a copy of everyone else\'s, so nothing is lost if the server restarts.')];
 }
+
+// Turn alerts, offered until this seat has them. Hidden where the phone can't do them (e.g. iPhone outside the Home Screen app).
+const alertBtn = () => canAlert() && !v.alerts && Notification.permission !== 'denied' &&
+  btn('Alert me when it\'s my turn', () => alertMe(true).catch(e => toast(e.message)), 'ghost', 'A buzz even with your screen off');
 
 // Host's game settings: in the lobby, and again between games. Everyone else sees a summary.
 function settings() {
@@ -189,7 +240,7 @@ function renderLobby() {
     h('h1', {}, 'Last Crawler Standing'),
     h('div', { className: 'group' }, h('h2', {}, 'Room code'), h('div', { className: 'code' }, v.code), btn('Share invite link', share), qrFor(link)),
     h('div', { className: 'group' }, h('h2', {}, `Crawlers (${v.names.length} of 6)`),
-      v.names.map((n, i) => h('div', { className: 'rival' }, h('span', { className: 'name' }, n), i === 0 && h('span', { className: 'note' }, 'host'), i === v.you && h('span', { className: 'note' }, 'you'), v.host && i > 0 && kickBtn(i, n)))),
+      v.names.map((n, i) => h('div', { className: 'rival' }, h('span', { className: 'name' }, n, flair((v.looks || [])[i], true)), i === 0 && h('span', { className: 'note' }, 'host'), i === v.you && h('span', { className: 'note' }, 'you'), v.host && i > 0 && kickBtn(i, n)))),
     settings(),
     v.practice && h('p', { className: 'tag' }, 'Practice round: your opponents are bots, and this game does not count toward your record.'),
     v.record && v.record.games > 0 && h('p', { className: 'tag' }, `Your record: ${plural(v.record.wins, 'win')} in ${plural(v.record.games, 'game')}. ${plural(v.points, 'point')} banked.`),
@@ -199,6 +250,7 @@ function renderLobby() {
         f.here ? h('span', { className: 'note' }, 'here') : f.invited ? h('span', { className: 'note' }, 'invited')
           : btn('Invite', () => post('invite', { ...session, to: f.id }).catch(e => toast(e.message)), 'mini'))),
       h('p', { className: 'tag' }, 'They see the invite when they open the game.')),
+    alertBtn(),
     v.host ? btn('Start the show', () => send({ type: 'start' }), '', v.names.length < 2 ? 'Needs at least 2 crawlers' : null)
       : h('p', { className: 'tag' }, `Waiting for ${v.names[0]} to start the show…`),
     howToPlay(v.variant),
@@ -265,7 +317,9 @@ function prompt(g, me) {
     rematch(g, me));
   // Knocked out: watch with every card face up, and heckle.
   if (!isAlive(my)) return say("You're out. Every card is face up for you now, so enjoy the show. Heckle away:",
-    h('div', { className: 'grid three' }, REACTIONS.map((r, i) => btn(r, () => post('react', { ...session, i }).catch(e => toast(e.message)), 'ghost'))));
+    h('div', { className: 'grid three' }, REACTIONS.map((r, i) => btn(r, () => post('react', { ...session, i }).catch(e => toast(e.message)), 'ghost')),
+      Object.keys((myCard() || {}).owned || {}).filter(k => SHOP[k] && SHOP[k].kind === 'heckle')
+        .map(k => btn(SHOP[k].name, () => post('react', { ...session, h: k }).catch(e => toast(e.message)), 'ghost'))));
 
   if (g.phase === 'turn') {
     if (g.turn !== me) return say(`${name(g.turn)} is deciding…`);
@@ -367,6 +421,7 @@ function renderGame() {
     g.phase === 'over' && fresh && h('div', { className: 'confetti' }, Array.from({ length: 16 }, (_, i) =>
       h('span', { style: `left:${(i * 37) % 100}%;background:${Object.values(ROLES)[i % 6].color}` }))),
     h('div', { className: 'bar' }, h('div', {}, h('h2', {}, `Room ${v.code}`), h('p', { className: 'tag' }, `Live to ${(2.4 + deaths * 1.7).toFixed(1)}M viewers`)), mute),
+    g.phase !== 'over' && alertBtn(),
     h('div', { id: 'announcer', className: news ? 'in' : '' }, headlines.map(l => h('p', {}, l))),
     g.players.filter(p => p.id !== me).map(p => seatRow(g, p, old)),
     awayPrompt(g, me),

@@ -1,16 +1,23 @@
 // Building blocks shared by every screen: elements, buttons, toasts, cards, coins, QR codes.
 // The scripts in public/js load in order (ui, net, fx, screens, app) and share their top-level names.
-const { ROLES, REACTIONS, ACHIEVEMENTS, BOXES, actionsFor, rolesFor, awards, waitingOn } = window.Game;
+const { ROLES, REACTIONS, ACHIEVEMENTS, BOXES, SHOP, BACK_COLORS, actionsFor, rolesFor, awards, waitingOn } = window.Game;
 const ART_V = 7; // bump when card art changes: phones cache images for a day
 
 // The back of every card: a pulp skull on show-red. One drawing, used by rivals' hidden cards and the bluff showdown.
-const CARD_BACK = 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 80">
-  <rect x="1.5" y="1.5" width="57" height="77" rx="6" fill="#7d1418" stroke="#000" stroke-width="3"/>
-  <rect x="7" y="7" width="46" height="66" rx="3" fill="none" stroke="#f5b921" stroke-width="2"/>
-  <circle cx="30" cy="36" r="13" fill="#ecdcb4" stroke="#000" stroke-width="2"/>
-  <rect x="23" y="44" width="14" height="10" rx="2" fill="#ecdcb4" stroke="#000" stroke-width="2"/>
+// Loot Shop card backs are the same drawing in other colours: [card, frame, skull].
+const backSvg = ([card, frame, skull]) => 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 80">
+  <rect x="1.5" y="1.5" width="57" height="77" rx="6" fill="${card}" stroke="#000" stroke-width="3"/>
+  <rect x="7" y="7" width="46" height="66" rx="3" fill="none" stroke="${frame}" stroke-width="2"/>
+  <circle cx="30" cy="36" r="13" fill="${skull}" stroke="#000" stroke-width="2"/>
+  <rect x="23" y="44" width="14" height="10" rx="2" fill="${skull}" stroke="#000" stroke-width="2"/>
   <circle cx="25" cy="35" r="3.6" fill="#000"/><circle cx="35" cy="35" r="3.6" fill="#000"/>
   <path d="M30 40l-2.4 4h4.8z" fill="#000"/><path d="M27 48v5M30 48v5M33 48v5" stroke="#000" stroke-width="1.5"/></svg>`);
+const CARD_BACK = backSvg(BACK_COLORS);
+const backFor = key => key && SHOP[key] ? backSvg(SHOP[key].colors) : CARD_BACK;
+// A player's title and badge (rarest achievement) next to their name. `look` comes from the server's room view.
+const flair = (look, full) => look && [look.title && h('small', { className: 'title' }, look.title),
+  look.badge && Object.assign(h('span', { className: `badge box-${look.badge.box}`, title: look.badge.title }, full ? `★ ${look.badge.title}` : '★'),
+    { ariaLabel: `Badge: ${look.badge.title}` })];
 document.documentElement.style.setProperty('--card-back', `url("${CARD_BACK}")`);
 const KEY = 'lcs-session';
 const app = document.getElementById('app'), toastEl = document.getElementById('toast');
